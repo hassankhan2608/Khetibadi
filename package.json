@@ -1,0 +1,32 @@
+{
+  "name": "khetibadi",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Khetibadi v2 — AI-powered agricultural platform monorepo",
+  "workspaces": [
+    "apps/dashboard",
+    "packages/ui",
+    "packages/types"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "@commitlint/types": "^19.0.0",
+    "husky": "^9.0.0",
+    "turbo": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "bun": ">=1.1.0"
+  },
+  "packageManager": "bun@1.1.0"
+}
