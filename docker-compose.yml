@@ -1,0 +1,134 @@
+name: khetibadi
+
+services:
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-khetibadi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-khetibadi}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-khetibadi}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Go Services ─────────────────────────────────────────────────────────────
+  auth:
+    build:
+      context: .
+      dockerfile: apps/auth/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  farm-service:
+    build:
+      context: .
+      dockerfile: apps/farm-service/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  market-service:
+    build:
+      context: .
+      dockerfile: apps/market-service/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  workers:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Python Services ─────────────────────────────────────────────────────────
+  ml-crop:
+    build:
+      context: apps/ml-crop
+      dockerfile: Dockerfile
+    ports:
+      - "8010:8010"
+    env_file: .env
+    volumes:
+      - ./apps/ml-crop/models:/app/models:ro
+
+  ml-vision:
+    build:
+      context: apps/ml-vision
+      dockerfile: Dockerfile
+    ports:
+      - "8011:8011"
+    env_file: .env
+    volumes:
+      - ./apps/ml-vision/models:/app/models:ro
+
+  ai-chat:
+    build:
+      context: apps/ai-chat
+      dockerfile: Dockerfile
+    ports:
+      - "8012:8012"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─── Frontend ─────────────────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - auth
+      - farm-service
+      - market-service
+
+volumes:
+  postgres_data:
+  redis_data:
