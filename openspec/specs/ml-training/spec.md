@@ -17,7 +17,7 @@ The system SHALL use the Kaggle crop recommendation dataset (Atharva Ingle, 2200
 - **Rows**: 2200
 - **Features**: N, P, K, temperature, humidity, ph, rainfall
 - **Target**: `label` (22 crop classes)
-- **License**: CC0 Public Domain
+- **License**: Apache 2.0
 
 #### Scenario: Download procedure
 ```bash
@@ -202,6 +202,7 @@ training ResNet34. Research confirms this improves in-field generalisation accur
 
 ```python
 from pathlib import Path
+import io
 from PIL import Image
 import rembg
 
@@ -224,7 +225,8 @@ for cls_dir in src.iterdir():
 
 #### Scenario: rembg dependency
 
-- `rembg==2.0.57` and `onnxruntime` are added to `requirements-train.txt`
+- `rembg[cpu]==2.0.75` is listed in the `[dependency-groups] train` section of
+  `apps/ml-vision/pyproject.toml` (already included)
 - The U2Net model is downloaded automatically on first run (~170 MB, cached by rembg)
 
 ---
@@ -256,7 +258,7 @@ val_tf = T.Compose([
     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-dataset = ImageFolder("data/plant_disease/raw/PlantVillage", transform=train_tf)
+dataset = ImageFolder("data/plant_disease/processed/PlantVillage", transform=train_tf)
 n_val = int(0.2 * len(dataset))
 train_ds, val_ds = random_split(dataset, [len(dataset) - n_val, n_val])
 val_ds.dataset.transform = val_tf
@@ -311,6 +313,7 @@ All saved model files SHALL include metadata for reproducibility.
 - `apps/ml-vision/models/resnet34_plantvillage.pth` — PyTorch checkpoint with class mapping, validation accuracy, and epoch
 
 #### Scenario: Training environment
-- All Python training scripts run under `uv` with a locked `requirements-train.txt`
+- All Python training scripts run under `uv` (`uv run python scripts/train_<name>.py`)
+  using the `pyproject.toml` of the relevant service
 - CUDA is used if available; training falls back to CPU without code changes
 - `torch.manual_seed(42)` and `numpy.random.seed(42)` are set at the top of every training script
