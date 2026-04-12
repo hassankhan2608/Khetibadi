@@ -1,0 +1,59 @@
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Editor ───────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ─── Go ───────────────────────────────────────────────────────────────────────
+bin/
+dist/
+*.exe
+*.test
+*.out
+vendor/
+go.work.sum
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# ML model artifacts (generated — never commit)
+apps/ml-crop/models/*.pkl
+apps/ml-vision/models/*.pth
+
+# ─── Node / Bun ───────────────────────────────────────────────────────────────
+node_modules/
+.turbo/
+apps/dashboard/dist/
+packages/ui/dist/
+packages/types/dist/
+*.tsbuildinfo
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.docker/
+
+# ─── Secrets / Env ────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
