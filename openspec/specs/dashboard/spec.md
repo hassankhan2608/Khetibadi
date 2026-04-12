@@ -6,7 +6,7 @@ Provide a responsive, data-rich single-page application for farmers to access al
 Khetibadi v2 features: farm management, crop/yield/fertilizer predictions, plant
 disease detection, live market prices, and AI chat assistance.
 
-Built with React 19 + Vite 6 + TanStack Router (file-based typed routing) +
+Built with React 19 + Vite 8 + TanStack Router (file-based typed routing) +
 TanStack Query v5 + Shadcn/UI + Tailwind CSS 4.
 
 ---
