@@ -1,0 +1,34 @@
+{
+  "name": "@khetibadi/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint .",
+    "clean": "rm -rf dist .turbo"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.5.0",
+    "vite": "^6.0.0"
+  }
+}
