@@ -1,0 +1,82 @@
+[project]
+name = "khetibadi-ml-vision"
+version = "0.1.0"
+description = "Khetibadi plant disease detection service — ResNet34 + OpenCV + rembg"
+requires-python = ">=3.12"
+
+dependencies = [
+  # ── Web framework ────────────────────────────────────────────────────────────
+  "fastapi==0.136.3",
+  "uvicorn[standard]>=0.34.0",
+  "python-multipart>=0.0.20",
+
+  # ── Pydantic v2 ──────────────────────────────────────────────────────────────
+  "pydantic==2.13.4",
+  "pydantic-settings>=2.7.0",
+
+  # ── Image processing ─────────────────────────────────────────────────────────
+  # rembg[cpu]: CPU-only ONNX runtime — correct for Docker Linux without CUDA base image.
+  # Use rembg[gpu] only if switching to a CUDA base image in Dockerfile.
+  "rembg[cpu]==2.0.75",
+  "Pillow>=11.0.0",
+  "opencv-python-headless>=4.10.0",
+
+  # ── PyTorch (CPU index — see [tool.uv.sources] below) ────────────────────────
+  # pretrained=True is REMOVED since torchvision 0.15. Use weights= enum API.
+  "torch==2.7.0",
+  "torchvision==0.22.0",
+
+  # ── Async job cache ──────────────────────────────────────────────────────────
+  "redis[asyncio]>=5.2.0",
+
+  # ── Utilities ────────────────────────────────────────────────────────────────
+  "numpy>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "httpx>=0.28.0",
+  "ruff>=0.9.0",
+  "mypy>=1.14.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ── PyTorch index routing ─────────────────────────────────────────────────────
+# Docker build (Linux) uses CPU wheels from the PyTorch index.
+# Switch to cu128 index if adding a CUDA base image.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RET", "ANN"]
+ignore = ["ANN101", "ANN102"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ── Mypy ─────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = false
+
+# ── Pytest ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
