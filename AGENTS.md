@@ -162,6 +162,40 @@ patterns, and `// TODO` comments trains everyone (human and AI) to accept that s
   first. Fatigue and repetition are the enemy of quality. Every commit is a professional
   artefact.
 
+### Context & File Reading Discipline
+
+> Reading entire files unnecessarily is one of the most damaging habits an AI agent can
+> have. It floods the context window with irrelevant content, triggers compression, and
+> causes earlier critical context — specs, decisions, invariants — to be lost. A senior
+> engineer opens the exact method they need, not the entire codebase.
+
+**Rules:**
+
+- **Never read a whole file to find one thing.** Use `grep` first to locate the exact
+  line, then read only the relevant window with `offset` + `limit`.
+- **Target your reads.** If you need to understand a function, read ±20 lines around it —
+  not the entire file from line 1.
+- **Grep before read.** Before opening any file, run a targeted search:
+  ```bash
+  # Find the function, then read only its neighbourhood
+  grep -n "func Register" apps/auth/internal/handler/auth_handler.go
+  # → line 47 — now read offset=40 limit=40, not the whole file
+  ```
+- **Use `glob` and `grep` for discovery, `read` only for confirmation.** If you need to
+  find where a pattern lives across the repo, `grep` the pattern — do not open files one
+  by one hoping to find it.
+- **Read config and spec files in sections.** Large files like `AGENTS.md`, `spec.md`,
+  or `docker-compose.yml` should be read with targeted offsets, not from line 1 every time.
+- **Be aware of your context window.** Every read call consumes context. Ask yourself
+  before reading: *"Do I actually need this content, or am I reading it out of habit?"*
+  If you can answer the question without reading — do not read.
+- **If you already read a section this session, do not re-read it.** Trust what you
+  already know. Re-reading is waste.
+
+**The mental model:** you are an experienced engineer who already knows the codebase
+layout. You open a file with a specific line number in mind. You do not scroll from the
+top hoping to find something.
+
 ---
 
 ## Build & Dev Commands
@@ -1466,3 +1500,6 @@ you found it. Ideally better.
 - Do not leave a `// nolint`, `# type: ignore`, or `// @ts-ignore` without a comment explaining the root cause.
 - Do not over-engineer. The simplest correct solution is the right solution.
 - Do not under-engineer. If you copy-paste logic twice, extract it.
+- Do not read entire files to find one function — grep for the line number first, then
+  read only the relevant window. Full-file reads flood the context window, trigger
+  compression, and cause earlier critical context to be forgotten.
