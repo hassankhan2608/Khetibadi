@@ -434,16 +434,102 @@ const createFarm = useMutation({
 ```
 
 ```typescript
-// Forms: React Hook Form + Zod schema
-const schema = z.object({
+// Forms: TanStack Form + Zod (Standard Schema — no adapter/resolver needed)
+import { useForm } from '@tanstack/react-form';
+
+const farmSchema = z.object({
   name: z.string().min(1, 'Farm name is required').max(100),
   soilType: z.enum(['clay', 'sandy', 'loamy', 'silty', 'peaty']),
 });
 
-type FormValues = z.infer<typeof schema>;
-
 function CreateFarmForm() {
-  const form = useForm<FormValues>({ resolver: zodResolver(schema) });
+  const form = useForm({
+    defaultValues: { name: '', soilType: 'loamy' as const },
+    validators: { onChange: farmSchema },
+    onSubmit: async ({ value }) => { await createFarm(value); },
+  });
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); form.handleSubmit(); }}>
+      <form.Field
+        name="name"
+        children={(field) => (
+          <Input
+            value={field.state.value}
+            onChange={(e) => field.handleChange(e.target.value)}
+            aria-invalid={field.state.meta.errors.length > 0}
+          />
+        )}
+      />
+      <form.Subscribe
+        selector={(s) => s.errors}
+        children={(errors) => errors.length > 0 && <p>{errors[0]}</p>}
+      />
+    </form>
+  );
+}
+```
+
+```typescript
+// Client state: @tanstack/react-store (memory only — never localStorage for tokens)
+import { Store } from '@tanstack/react-store';
+import { useStore } from '@tanstack/react-store';
+
+// Define once at module level
+export const authStore = new Store({
+  user: null as User | null,
+  token: null as string | null,
+});
+
+// Read in components (re-renders only when selected slice changes)
+const token = useStore(authStore, (s) => s.token);
+
+// Update (actions defined alongside the store)
+export function setAuth(user: User, token: string) {
+  authStore.setState(() => ({ user, token }));
+}
+export function clearAuth() {
+  authStore.setState(() => ({ user: null, token: null }));
+}
+```
+
+```typescript
+// Virtualization: @tanstack/react-virtual (long lists — market prices, farm list)
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+function PriceList({ items }: { items: MarketPrice[] }) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 56,
+    overscan: 5,
+  });
+  return (
+    <div ref={parentRef} className="h-[600px] overflow-auto">
+      <div style={{ height: virtualizer.getTotalSize() }} className="relative w-full">
+        {virtualizer.getVirtualItems().map((vi) => (
+          <div
+            key={vi.key}
+            style={{ transform: `translateY(${vi.start}px)` }}
+            className="absolute w-full"
+          >
+            <PriceRow price={items[vi.index]!} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+```typescript
+// Debounced async: @tanstack/react-pacer (search inputs, API calls)
+import { useDebouncer } from '@tanstack/react-pacer';
+
+function CommoditySearch() {
+  const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncer(query, { wait: 300 });
+  const { data } = useQuery(commoditySearchOptions(debouncedQuery));
   // ...
 }
 ```
@@ -452,10 +538,11 @@ function CreateFarmForm() {
 
 ```typescript
 // 1. React + core
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 
 // 2. Third-party libraries
 import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { MapContainer } from 'react-leaflet';
 
 // 3. Internal packages
@@ -572,7 +659,7 @@ All Dockerfiles MUST follow these rules:
 
 ```dockerfile
 # Stage 1: Build
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /build
 
@@ -779,15 +866,143 @@ Farm-service and market-service updated in this commit.
 
 ### Commit Granularity Target
 
-This project targets **≥ 100 commits** to represent professional development history.
-Examples of what warrants a separate commit:
-- Adding a single endpoint
-- Adding tests for a single endpoint
-- Fixing a bug found while writing tests
-- Refactoring a function for clarity
-- Updating a `.golangci.yml` rule
-- Adding a single migration file
-- Moving a helper from inline to a shared package
+This project targets **≥ 250 commits** to reflect how a professional team actually
+ships code — not one giant dump at the end, but a living history of incremental,
+reviewable progress.
+
+#### The Core Rule: Commit As You Go
+
+> **Never accumulate.** The moment a logical unit of work is complete and the code
+> compiles / lints clean, commit it. Do not wait until a feature is "fully done".
+
+A real developer commits **multiple times per hour** during active work. An AI agent
+must do the same — commit after every meaningful change, not once at the end of a
+task. If you finish a session with more than 5 uncommitted files, something is wrong.
+
+#### What Triggers a Commit (commit immediately after each)
+
+**Go services:**
+- Domain type defined (`internal/domain/user.go` created)
+- Repository interface defined
+- SQL query added to `db/queries/*.sql`
+- `sqlc generate` run and output committed
+- Single repository method implemented (`FindByEmail`)
+- Single service method implemented (`CreateUser`)
+- Single handler implemented (`POST /auth/register`)
+- Handler test written and passing
+- Service test written and passing
+- Middleware added or updated
+- Migration file created
+- Error type or sentinel defined
+- `.golangci.yml` rule added or updated
+
+**Python services:**
+- Pydantic schema added (`app/schemas/crop.py`)
+- Single route function implemented
+- Service function implemented
+- HMAC middleware adapted
+- Test written and passing
+- `pyproject.toml` dependency added
+
+**TypeScript / React:**
+- Route file created (`src/routes/dashboard/farm-map.tsx`)
+- Feature context + hook created
+- Single API hook written (`useFarmsQuery`)
+- Single component implemented (`FarmCard.tsx`)
+- Component tests written
+- Query key factory defined
+- Store slice defined (`auth-store.ts`)
+- `vite.config.ts` configured
+- `tsconfig.json` updated
+
+**Config / infra:**
+- Single `Dockerfile` written
+- `docker-compose.yml` service added
+- `.env.example` entry added
+- `Makefile` target added
+- Migration file added
+
+#### The Rhythm (example: implementing a Go handler)
+
+```
+feat(auth): add User domain type and repository interface
+
+feat(auth): add sqlc queries for user create and find-by-email
+
+chore(auth): run sqlc generate — add generated db layer
+
+feat(auth): implement UserRepo.Create and FindByEmail
+
+test(auth): add table-driven tests for UserRepo
+
+feat(auth): implement AuthService.Register with bcrypt
+
+test(auth): add AuthService.Register tests — duplicate email case
+
+feat(auth): add POST /auth/register handler
+
+test(auth): add handler integration test for register endpoint
+```
+
+That is **9 commits** for one endpoint. That is correct. That is professional.
+
+#### How to Stage (never `git add .`)
+
+Always stage specific files or directories:
+
+```bash
+# Good — intentional
+git add apps/auth/internal/domain/user.go
+git commit -m "feat(auth): add User domain type"
+
+# Good — related files together
+git add apps/auth/internal/repository/user_repo.go \
+        apps/auth/internal/repository/user_repo_test.go
+git commit -m "feat(auth): implement UserRepo with FindByEmail and Create"
+
+# Bad — accumulating everything
+git add .
+git commit -m "add auth stuff"   # ← NEVER do this
+```
+
+#### What a 250+ Commit History Looks Like
+
+By the time the project is feature-complete, the log should read like a timeline:
+
+```
+chore(go-shared): add HMAC middleware skeleton
+feat(go-shared): implement HMAC-SHA256 signature verification
+test(go-shared): add HMAC middleware replay window test
+feat(auth): add User and RefreshToken domain types
+feat(auth): add sqlc queries — create_user, find_by_email, upsert_token
+chore(auth): run sqlc generate
+feat(auth): implement UserRepo
+feat(auth): implement AuthService.Register with bcrypt cost 12
+test(auth): add Register duplicate email returns 409
+feat(auth): add POST /auth/register handler
+test(auth): add register handler integration test
+feat(auth): implement AuthService.Login with JWT issuance
+test(auth): add Login invalid password returns 401
+feat(auth): add POST /auth/login handler
+feat(auth): add refresh token rotation — POST /auth/refresh
+feat(auth): add logout — DELETE /auth/logout clears cookie
+feat(farm): scaffold farm domain types and GeoJSON helpers
+...
+```
+
+Each commit is small, named, and self-contained. `git bisect` works. Code review
+works. Rollback works. **This is the standard.**
+
+#### Anti-Patterns (NEVER do these)
+
+| Anti-pattern | Why it's wrong |
+|---|---|
+| `git add . && git commit -m "wip"` | Untraceable, unrollbackable, unprofessional |
+| Committing at end of a session only | Loses granularity, hides the development process |
+| `fix: misc fixes` | Meaningless — what was fixed? |
+| One commit per file arbitrarily | Commit by **logical unit**, not by file count |
+| Committing broken/unlinted code | Every commit must build and lint clean |
+| `feat: add everything` | Split into individual features |
 
 **Never batch multiple features into one commit.**
 
