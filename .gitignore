@@ -57,3 +57,9 @@ packages/types/dist/
 # ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ─── Go build artifacts ───────────────────────────────────────────────────────
+apps/*/server
+apps/*/worker
+apps/*/cmd/*/server
+apps/*/cmd/*/worker
