@@ -218,7 +218,7 @@
 - [ ] 11.2 Set up TanStack Router dev tools + route tree codegen
 - [ ] 11.3 Set up TanStack Query v5 with global QueryClient + error boundary
 - [ ] 11.4 Set up Zustand `authStore` (access token in memory, user info)
-- [ ] 11.5 Set up Axios instance with baseURL from `VITE_*` env vars + 401 interceptor for token refresh
+- [ ] 11.5 Set up Axios instance with baseURL from `VITE_API_BASE_URL` + 401 interceptor for token refresh
 - [ ] 11.6 Implement route guard (`beforeLoad`) — redirect to `/login` if not authenticated
 - [ ] 11.7 Build `/login` page — React Hook Form + Zod validation + POST /auth/login
 - [ ] 11.8 Build `/register` page — form with password strength indicator
@@ -252,10 +252,11 @@
   - All Go services with `restart: unless-stopped` + health checks
   - Both Python services with model volume mounts
   - dashboard nginx static
-- [ ] 12.2 Write `docker-compose.override.yml` for local hot-reload (volume mounts for code)
-- [ ] 12.3 Add `postgres/init/` — SQL scripts to create PostGIS + pgvector extensions on first run
-- [ ] 12.4 Add `.dockerignore` for each service (exclude `tests/`, `*.md`, `scripts/`, etc.)
-- [ ] 12.5 Test full `docker compose up` — verify all health checks pass
+- [ ] 12.2 Publish only dashboard and auth gateway for browser HTTP traffic; keep downstream service ports internal via Docker networking
+- [ ] 12.3 Write `docker-compose.override.yml` for local hot-reload (volume mounts for code)
+- [ ] 12.4 Add `postgres/init/` — SQL scripts to create PostGIS + pgvector extensions on first run
+- [ ] 12.5 Add `.dockerignore` for each service (exclude `tests/`, `*.md`, `scripts/`, etc.)
+- [ ] 12.6 Test full `docker compose up` — verify all health checks pass
 
 ---
 

@@ -19,7 +19,7 @@ farm GIS mapping, and an AI chat assistant powered by Groq Llama 3.3 70B.
 
 | Directory | Language | Port | Purpose |
 |---|---|---|---|
-| `apps/auth/` | Go | 8000 | JWT auth, user management |
+| `apps/auth/` | Go | 8000 | JWT auth, user management, public API gateway |
 | `apps/farm-service/` | Go | 8001 | Farm CRUD, PostGIS, weather |
 | `apps/market-service/` | Go | 8002 | AGMARKNET prices, alerts |
 | `apps/workers/` | Go | 8080† | Asynq background jobs (†Asynqmon UI) |
@@ -1399,12 +1399,7 @@ MARKET_SERVICE_URL=http://market-service:8002
 CHAT_RETENTION_DAYS=90
 
 # Dashboard (prefix VITE_ for client exposure)
-VITE_AUTH_URL=http://localhost:8000
-VITE_FARM_URL=http://localhost:8001
-VITE_MARKET_URL=http://localhost:8002
-VITE_ML_CROP_URL=http://localhost:8010
-VITE_ML_VISION_URL=http://localhost:8011
-VITE_AI_CHAT_URL=http://localhost:8012
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
 ---

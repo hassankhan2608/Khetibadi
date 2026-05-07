@@ -31,10 +31,12 @@ The project SHALL use a single Turborepo-managed monorepo with a `go.work` works
 
 Each service SHALL own exactly one responsibility. No service calls another service's database directly.
 
-#### Scenario: Auth as gateway
-- GIVEN a request arrives at any Go or Python service
-- WHEN the request carries a valid HMAC-signed header issued by auth
-- THEN the service processes it without re-calling the auth service
+#### Scenario: Auth as API gateway
+- GIVEN a dashboard request targets a protected backend capability
+- WHEN the browser sends the request to the public API gateway
+- THEN the auth service validates the user session before proxying downstream
+- AND it attaches HMAC-signed identity headers for the target Go or Python service
+- AND the target service processes the request without re-calling auth
 - AND the user ID is read directly from the HMAC header payload
 
 #### Scenario: No cross-database access
@@ -46,12 +48,13 @@ Each service SHALL own exactly one responsibility. No service calls another serv
 
 ### Requirement: Port Allocation
 
-Each service SHALL bind to a fixed, non-overlapping port in all environments.
+Each service SHALL bind to a fixed, non-overlapping internal container port in all environments.
+Only the dashboard and the public API gateway SHALL be published for browser traffic.
 
 #### Scenario: Port map
 - GIVEN all services start in Docker Compose
-- THEN ports are allocated as follows:
-  - `auth`: 8000
+- THEN internal service ports are allocated as follows:
+  - `auth` / public API gateway: 8000
   - `farm-service`: 8001
   - `market-service`: 8002
   - `ml-crop`: 8010
@@ -61,6 +64,38 @@ Each service SHALL bind to a fixed, non-overlapping port in all environments.
   - `dashboard (nginx)`: 3000
   - `PostgreSQL`: 5432
   - `Redis`: 6379
+- AND browser-facing API traffic is published only through `auth` on port 8000
+- AND the dashboard is published on port 3000
+- AND downstream application services are reachable only on the Compose network by service name
+
+---
+
+### Requirement: Single Public API Origin
+
+The dashboard SHALL communicate with one public API origin. The gateway SHALL route
+requests to downstream services by path and SHALL hide backend service ports from
+browser code.
+
+#### Scenario: Dashboard calls one API domain
+- GIVEN the dashboard is loaded in a browser
+- WHEN it calls any backend capability
+- THEN the request uses `VITE_API_BASE_URL` as the only API origin
+- AND no `VITE_*` variable exposes `farm-service`, `market-service`, `ml-crop`, `ml-vision`, or `ai-chat` directly
+
+#### Scenario: Gateway route map
+- GIVEN a request arrives at the public API gateway
+- WHEN the path starts with `/auth/`
+- THEN auth handles the request locally
+- WHEN the path starts with `/farms/`
+- THEN auth proxies the request to `farm-service:8001`
+- WHEN the path starts with `/market/`
+- THEN auth proxies the request to `market-service:8002`
+- WHEN the path starts with `/ml/crop/`
+- THEN auth proxies the request to `ml-crop:8010`
+- WHEN the path starts with `/ml/vision/`
+- THEN auth proxies the request to `ml-vision:8011`
+- WHEN the path starts with `/ai/chat/`
+- THEN auth proxies the request to `ai-chat:8012`
 
 ---
 
@@ -70,8 +105,9 @@ Go and Python services SHALL verify requests using HMAC-SHA256 signed headers se
 
 #### Scenario: HMAC header forwarding
 - GIVEN a user is authenticated and makes a dashboard request
-- WHEN the dashboard calls `farm-service` via API
-- THEN auth attaches `X-User-ID` and `X-HMAC-Signature` headers
+- WHEN the dashboard calls the public API gateway
+- THEN auth routes the request to the target downstream service
+- AND auth attaches `X-User-ID` and `X-HMAC-Signature` headers
 - AND farm-service verifies the signature using the shared HMAC secret before processing
 
 #### Scenario: Missing HMAC header

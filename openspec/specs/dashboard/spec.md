@@ -390,9 +390,9 @@ Every data-fetching component MUST implement:
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_AUTH_URL` | Auth service base URL (e.g., http://localhost:8000) |
-| `VITE_FARM_URL` | Farm service base URL (e.g., http://localhost:8001) |
-| `VITE_MARKET_URL` | Market service base URL (e.g., http://localhost:8002) |
-| `VITE_ML_CROP_URL` | ML crop service base URL (e.g., http://localhost:8010) |
-| `VITE_ML_VISION_URL` | ML vision service base URL (e.g., http://localhost:8011) |
-| `VITE_AI_CHAT_URL` | AI chat service base URL (e.g., http://localhost:8012) |
+| `VITE_API_BASE_URL` | Single public API gateway origin (e.g., http://localhost:8000) |
+
+The dashboard MUST NOT expose downstream service origins through `VITE_*` variables.
+All API clients SHALL build paths relative to `VITE_API_BASE_URL`, such as
+`/auth/login`, `/farms`, `/market/prices`, `/ml/crop/recommend`,
+`/ml/vision/detect`, and `/ai/chat/sessions`.

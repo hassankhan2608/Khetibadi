@@ -57,9 +57,10 @@ no shared code except HTTP contracts.
 
 ---
 
-### Decision 2: Hono Replaced by Gin for Auth Gateway
+### Decision 2: Gin Auth Service as the Public API Gateway
 
-**Decision:** Auth service uses Gin v1 (Go), not Hono (Bun/TS) as originally considered.
+**Decision:** Auth service uses Gin v1 (Go), not Hono (Bun/TS) as originally considered,
+and is the only browser-facing API gateway for the dashboard.
 
 **Reasoning:**
 - All data services (farm, market, workers) are already in Go.
@@ -67,6 +68,8 @@ no shared code except HTTP contracts.
   is cleaner than a TS/Go split at the gateway layer.
 - Gin is battle-tested, has lower cold-start latency than Bun, and the team is already
   writing Go for other services.
+- A single gateway keeps browser configuration to one API origin and prevents frontend
+  code from depending on individual backend service ports.
 
 ---
 

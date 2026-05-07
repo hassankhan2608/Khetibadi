@@ -2,7 +2,8 @@
 
 ## Purpose
 
-User registration, login, JWT session management, and downstream service authentication. No OAuth — email and password only.
+User registration, login, JWT session management, public API gateway routing, and
+downstream service authentication. No OAuth — email and password only.
 
 ## Requirements
 
@@ -127,6 +128,39 @@ The auth service SHALL attach HMAC-signed headers to every proxied request so do
 - GIVEN `X-User-ID` was modified in transit
 - WHEN farm-service verifies the HMAC signature
 - THEN signature mismatch causes `401 Unauthorized`
+
+---
+
+### Requirement: Public API Gateway Routing
+
+Auth SHALL be the single browser-facing API gateway. It SHALL handle auth routes
+locally and reverse proxy all other protected API routes to internal services over
+the Docker network.
+
+#### Scenario: Browser uses a single API origin
+- GIVEN the dashboard is running in the browser
+- WHEN it performs login, farm, market, ML, or chat requests
+- THEN every request is sent to the auth gateway origin
+- AND the browser never calls downstream service ports directly
+
+#### Scenario: Route prefixes map to internal services
+- GIVEN a request reaches auth with a valid session when required
+- WHEN the path starts with `/farms/`
+- THEN auth proxies to `farm-service:8001`
+- WHEN the path starts with `/market/`
+- THEN auth proxies to `market-service:8002`
+- WHEN the path starts with `/ml/crop/`
+- THEN auth proxies to `ml-crop:8010`
+- WHEN the path starts with `/ml/vision/`
+- THEN auth proxies to `ml-vision:8011`
+- WHEN the path starts with `/ai/chat/`
+- THEN auth proxies to `ai-chat:8012`
+
+#### Scenario: Downstream ports stay private
+- GIVEN Docker Compose starts the full stack
+- WHEN a browser accesses the application
+- THEN only the dashboard and auth gateway are published for HTTP traffic
+- AND farm-service, market-service, ml-crop, ml-vision, and ai-chat remain internal
 
 ---
 
