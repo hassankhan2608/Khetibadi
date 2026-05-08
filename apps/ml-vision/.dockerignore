@@ -1,0 +1,16 @@
+.git
+**/*.md
+**/tests/
+**/scripts/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/node_modules/
+**/.env*
+**/Makefile
+models/*.pth
+models/*.pt
+models/*.onnx

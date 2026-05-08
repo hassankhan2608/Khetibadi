@@ -1,0 +1,10 @@
+.git
+**/*.md
+**/tests/
+**/scripts/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/node_modules/
+**/.env*
+**/Makefile
