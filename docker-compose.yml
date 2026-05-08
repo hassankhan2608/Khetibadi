@@ -1,5 +1,20 @@
 name: khetibadi
 
+x-app-env: &app-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  DATABASE_URL: postgres://${POSTGRES_USER:-khetibadi}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-khetibadi}?sslmode=disable
+  REDIS_URL: redis://redis:6379
+  AUTH_SERVICE_URL: http://auth:8000
+  FARM_SERVICE_URL: http://farm-service:8001
+  MARKET_SERVICE_URL: http://market-service:8002
+  ML_CROP_SERVICE_URL: http://ml-crop:8010
+  ML_VISION_SERVICE_URL: http://ml-vision:8011
+  AI_CHAT_SERVICE_URL: http://ai-chat:8012
+  ML_CROP_URL: http://ml-crop:8010
+  ML_VISION_URL: http://ml-vision:8011
+  AI_CHAT_URL: http://ai-chat:8012
+
 services:
   # ─── Infrastructure ──────────────────────────────────────────────────────────
   postgres:
@@ -38,6 +53,8 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,9 +65,11 @@ services:
     build:
       context: .
       dockerfile: apps/farm-service/Dockerfile
-    ports:
-      - "8001:8001"
+    expose:
+      - "8001"
     env_file: .env
+    environment:
+      <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,9 +80,11 @@ services:
     build:
       context: .
       dockerfile: apps/market-service/Dockerfile
-    ports:
-      - "8002:8002"
+    expose:
+      - "8002"
     env_file: .env
+    environment:
+      <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,9 +95,11 @@ services:
     build:
       context: .
       dockerfile: apps/workers/Dockerfile
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     env_file: .env
+    environment:
+      <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,9 +111,11 @@ services:
     build:
       context: apps/ml-crop
       dockerfile: Dockerfile
-    ports:
-      - "8010:8010"
+    expose:
+      - "8010"
     env_file: .env
+    environment:
+      <<: *app-env
     volumes:
       - ./apps/ml-crop/models:/app/models:ro
 
@@ -98,9 +123,11 @@ services:
     build:
       context: apps/ml-vision
       dockerfile: Dockerfile
-    ports:
-      - "8011:8011"
+    expose:
+      - "8011"
     env_file: .env
+    environment:
+      <<: *app-env
     volumes:
       - ./apps/ml-vision/models:/app/models:ro
 
@@ -108,9 +135,11 @@ services:
     build:
       context: apps/ai-chat
       dockerfile: Dockerfile
-    ports:
-      - "8012:8012"
+    expose:
+      - "8012"
     env_file: .env
+    environment:
+      <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,8 +155,6 @@ services:
       - "3000:80"
     depends_on:
       - auth
-      - farm-service
-      - market-service
 
 volumes:
   postgres_data:
