@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     crop_model_path: str = Field(default="models/crop_model.pkl")
     yield_model_path: str = Field(default="models/yield_model.pkl")
     fertilizer_model_path: str = Field(default="models/fertilizer_model.pkl")
+    hmac_secret: str = Field(default="")
+    ml_allow_stub_mode: bool = Field(default=False)
 
 
 def get_settings() -> Settings:
