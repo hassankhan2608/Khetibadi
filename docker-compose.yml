@@ -14,6 +14,9 @@ x-app-env: &app-env
   ML_CROP_URL: http://ml-crop:8010
   ML_VISION_URL: http://ml-vision:8011
   AI_CHAT_URL: http://ai-chat:8012
+  ML_ALLOW_STUB_MODE: "true"
+  AI_CHAT_ALLOW_FAKE_LLM: "true"
+  WORKER_CONCURRENCY: "5"
 
 services:
   # ─── Infrastructure ──────────────────────────────────────────────────────────
@@ -100,6 +103,7 @@ services:
     env_file: .env
     environment:
       <<: *app-env
+      PORT: "8080"
     depends_on:
       postgres:
         condition: service_healthy

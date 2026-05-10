@@ -36,6 +36,12 @@ htmlcov/
 # ML model artifacts (generated — never commit)
 apps/ml-crop/models/*.pkl
 apps/ml-vision/models/*.pth
+apps/ml-vision/models/*.pt
+apps/ml-vision/models/*.onnx
+models/**/*.pkl
+models/**/*.pth
+models/**/*.pt
+models/**/*.onnx
 
 # ─── Node / Bun ───────────────────────────────────────────────────────────────
 node_modules/
