@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     groq_max_tokens: int = Field(default=1024, ge=1)
     chat_rate_limit_per_minute: int = Field(default=30, ge=1)
     chat_retention_days: int = Field(default=90, ge=1)
+    hmac_secret: str = Field(default="")
+    ai_chat_allow_fake_llm: bool = Field(default=False)
 
 
 def get_settings() -> Settings:
