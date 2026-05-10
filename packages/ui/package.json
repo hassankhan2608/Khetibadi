@@ -12,14 +12,15 @@
     }
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && tsc --emitDeclarationOnly",
     "type-check": "tsc --noEmit",
     "lint": "eslint .",
     "clean": "rm -rf dist .turbo"
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0"
   },
   "dependencies": {
     "clsx": "^2.1.1",
