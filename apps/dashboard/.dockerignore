@@ -1,0 +1,8 @@
+.git
+**/*.md
+**/node_modules/
+**/.env*
+**/.turbo/
+**/dist/
+**/coverage/
+**/Makefile
