@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     vision_model_path: str = Field(default="models/resnet34_plantvillage.pth")
     redis_url: str = Field(default="redis://redis:6379/0")
     confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    hmac_secret: str = Field(default="")
+    ml_allow_stub_mode: bool = Field(default=False)
 
 
 def get_settings() -> Settings:
