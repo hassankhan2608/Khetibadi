@@ -58,6 +58,7 @@ type appConfig struct {
 	JWTAccessTTL       string `envconfig:"JWT_ACCESS_TTL" default:"15m"`
 	JWTRefreshTTL      string `envconfig:"JWT_REFRESH_TTL" default:"168h"`
 	HMACSecret         string `envconfig:"HMAC_SECRET"`
+	CORSAllowedOrigins string `envconfig:"CORS_ALLOWED_ORIGINS" default:"http://localhost:3000"`
 	FarmServiceURL     string `envconfig:"FARM_SERVICE_URL" default:"http://farm-service:8001"`
 	MarketServiceURL   string `envconfig:"MARKET_SERVICE_URL" default:"http://market-service:8002"`
 	MLCropServiceURL   string `envconfig:"ML_CROP_SERVICE_URL" default:"http://ml-crop:8010"`
@@ -131,6 +132,7 @@ func main() {
 	auth := newAuthHandler(&cfg)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(corsMiddleware(cfg.CORSAllowedOrigins))
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
 
@@ -407,6 +409,33 @@ func registerGatewayRoutes(r *gin.Engine, auth gin.HandlerFunc, routes []gateway
 		handler := newReverseProxyHandler(route)
 		r.Any(route.Prefix, auth, handler)
 		r.Any(route.Prefix+"/*proxyPath", auth, handler)
+	}
+}
+
+func corsMiddleware(allowedOrigins string) gin.HandlerFunc {
+	allowed := map[string]struct{}{}
+	for origin := range strings.SplitSeq(allowedOrigins, ",") {
+		trimmed := strings.TrimSpace(origin)
+		if trimmed != "" {
+			allowed[trimmed] = struct{}{}
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if _, ok := allowed[origin]; ok {
+			responseHeaders := c.Writer.Header()
+			responseHeaders.Set("Access-Control-Allow-Origin", origin)
+			responseHeaders.Set("Access-Control-Allow-Credentials", "true")
+			responseHeaders.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+			responseHeaders.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			responseHeaders.Add("Vary", "Origin")
+		}
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
 	}
 }
 
