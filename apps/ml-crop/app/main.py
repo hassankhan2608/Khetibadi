@@ -10,8 +10,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 
+import joblib
+import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -23,6 +25,11 @@ REPLAY_WINDOW_SECONDS = 300
 MAX_BATCH_SIZE = 50
 
 logger = logging.getLogger(SERVICE_NAME)
+
+
+class CropArtifact(BaseModel):
+    model: Any
+    metadata: dict[str, Any]
 
 
 class AuthUser(BaseModel):
@@ -63,7 +70,7 @@ class CropRecommendation(BaseModel):
     crop: str
     confidence: float
     alternatives: list[str]
-    model_mode: Literal["stub"]
+    model_mode: Literal["model", "stub"]
     warning: str | None
 
 
@@ -71,7 +78,7 @@ class YieldPrediction(BaseModel):
     crop: str
     predicted_yield_tonnes: float
     yield_per_hectare_tonnes: float
-    model_mode: Literal["stub"]
+    model_mode: Literal["model", "stub"]
     warning: str | None
 
 
@@ -80,14 +87,18 @@ class FertilizerRecommendation(BaseModel):
     nitrogen_kg_per_ha: float
     phosphorus_kg_per_ha: float
     potassium_kg_per_ha: float
-    model_mode: Literal["stub"]
+    model_mode: Literal["model", "stub"]
     warning: str | None
+
+
+crop_artifact: CropArtifact | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings: Settings = get_settings()
     configure_logging(settings.log_level)
+    load_artifacts(settings)
     logger.info(
         "service starting",
         extra={"service": SERVICE_NAME, "env": settings.app_env, "port": settings.port},
@@ -157,7 +168,7 @@ async def health() -> dict[str, object]:
         settings.fertilizer_model_path,
     ]
     artifacts_present = all(Path(path).exists() for path in model_paths)
-    mode = "stub" if settings.ml_allow_stub_mode and not artifacts_present else "model"
+    mode = "model" if crop_artifact is not None else "stub"
     return {
         "status": "ok" if artifacts_present or settings.ml_allow_stub_mode else "degraded",
         "service": SERVICE_NAME,
@@ -168,6 +179,8 @@ async def health() -> dict[str, object]:
 
 @app.post("/ml/crop/recommend")
 async def recommend_crop(req: CropRecommendationRequest, _: AuthDependency) -> CropRecommendation:
+    if crop_artifact is not None:
+        return predict_crop_recommendation(req, crop_artifact)
     ensure_stub_available()
     return build_crop_recommendation(req)
 
@@ -243,25 +256,30 @@ async def recommend_fertilizer_alias(
 
 @app.get("/ml/crop/info")
 async def crop_info(_: AuthDependency) -> dict[str, object]:
+    if crop_artifact is not None:
+        return {
+            "service": SERVICE_NAME,
+            "model_mode": "model",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "supported_crops": crop_artifact.metadata.get("classes", supported_crops()),
+            "features": crop_artifact.metadata.get("features", crop_features()),
+            "metadata": crop_artifact.metadata,
+        }
     return {
         "service": SERVICE_NAME,
         "model_mode": "stub",
         "generated_at": datetime.now(UTC).isoformat(),
         "supported_crops": supported_crops(),
-        "features": [
-            "nitrogen",
-            "phosphorus",
-            "potassium",
-            "temperature",
-            "humidity",
-            "ph",
-            "rainfall",
-        ],
+        "features": crop_features(),
     }
 
 
 @app.get("/ml/crop/feature-importance")
 async def feature_importance(_: AuthDependency) -> dict[str, float]:
+    if crop_artifact is not None:
+        importances = crop_artifact.metadata.get("feature_importance")
+        if isinstance(importances, dict):
+            return {str(key): float(value) for key, value in importances.items()}
     return {
         "nitrogen": 0.18,
         "phosphorus": 0.13,
@@ -284,6 +302,77 @@ def ensure_stub_available() -> None:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"error": "model_unavailable", "message": "model artifacts are not available"},
     )
+
+
+def load_artifacts(settings: Settings) -> None:
+    global crop_artifact
+
+    crop_path = Path(settings.crop_model_path)
+    if crop_path.exists():
+        crop_artifact = load_crop_artifact(crop_path)
+        logger.info(
+            "crop model loaded",
+            extra={"service": SERVICE_NAME, "model_path": str(crop_path)},
+        )
+        return
+    crop_artifact = None
+    if not settings.ml_allow_stub_mode:
+        raise RuntimeError(f"crop model artifact not found: {crop_path}")
+    logger.warning(
+        "crop model missing; explicit stub mode enabled",
+        extra={"service": SERVICE_NAME, "model_path": str(crop_path)},
+    )
+
+
+def load_crop_artifact(path: Path) -> CropArtifact:
+    loaded = joblib.load(path)
+    if not isinstance(loaded, dict):
+        raise RuntimeError("crop model artifact must be a dict")
+    model = loaded.get("model")
+    metadata = loaded.get("metadata")
+    if model is None or not isinstance(metadata, dict):
+        raise RuntimeError("crop model artifact missing model or metadata")
+    features = metadata.get("features")
+    if features != crop_features():
+        raise RuntimeError("crop model feature order does not match service contract")
+    return CropArtifact(model=model, metadata=metadata)
+
+
+def predict_crop_recommendation(
+    req: CropRecommendationRequest,
+    artifact: CropArtifact,
+) -> CropRecommendation:
+    frame = pd.DataFrame([crop_feature_row(req)], columns=crop_features())
+    model = artifact.model
+    prediction = str(cast(Any, model).predict(frame)[0])
+    probabilities = cast(Any, model).predict_proba(frame)[0]
+    classes = [str(item) for item in cast(Any, model).classes_]
+    scored = sorted(
+        zip(classes, probabilities, strict=True),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    alternatives = [crop for crop, _ in scored if crop != prediction][:3]
+    confidence = next((float(score) for crop, score in scored if crop == prediction), 0.0)
+    return CropRecommendation(
+        crop=prediction,
+        confidence=round(confidence, 4),
+        alternatives=alternatives,
+        model_mode="model",
+        warning=None,
+    )
+
+
+def crop_feature_row(req: CropFeatures) -> dict[str, float]:
+    return {
+        "nitrogen": req.nitrogen,
+        "phosphorus": req.phosphorus,
+        "potassium": req.potassium,
+        "temperature": req.temperature,
+        "humidity": req.humidity,
+        "ph": req.ph,
+        "rainfall": req.rainfall,
+    }
 
 
 def build_crop_recommendation(req: CropRecommendationRequest) -> CropRecommendation:
@@ -311,3 +400,15 @@ def build_crop_recommendation(req: CropRecommendationRequest) -> CropRecommendat
 
 def supported_crops() -> list[str]:
     return ["rice", "wheat", "maize", "cotton", "sugarcane", "millet", "pulses"]
+
+
+def crop_features() -> list[str]:
+    return [
+        "nitrogen",
+        "phosphorus",
+        "potassium",
+        "temperature",
+        "humidity",
+        "ph",
+        "rainfall",
+    ]

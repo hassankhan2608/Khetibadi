@@ -53,10 +53,10 @@ python_version = "3.12"
 strict = true
 ignore_missing_imports = false
 
-# sklearn 1.x ships partial inline annotations; no third-party stubs exist.
-# joblib has no py.typed marker. Suppress only these two.
+# sklearn 1.x ships partial inline annotations; joblib/pandas do not provide the
+# precise runtime generics needed by these training and inference scripts.
 [[tool.mypy.overrides]]
-module = ["sklearn.*", "joblib.*"]
+module = ["sklearn.*", "joblib.*", "pandas.*"]
 ignore_missing_imports = true
 
 # ── Pytest ───────────────────────────────────────────────────────────────────
