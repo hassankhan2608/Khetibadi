@@ -234,7 +234,7 @@ func (h *authHandler) register(c *gin.Context) {
 	h.store.usersByEmail[u.Email] = u
 	h.store.usersByID[u.ID] = u
 	h.store.mu.Unlock()
-	response.Created(c, gin.H{"user": publicUser(u)})
+	h.issueSession(c, u, uuid.NewString(), http.StatusCreated)
 }
 
 func (h *authHandler) login(c *gin.Context) {
@@ -251,7 +251,7 @@ func (h *authHandler) login(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, response.CodeInvalidCreds, invalidCredsMessage)
 		return
 	}
-	h.issueSession(c, u, uuid.NewString())
+	h.issueSession(c, u, uuid.NewString(), http.StatusOK)
 }
 
 func (h *authHandler) refresh(c *gin.Context) {
@@ -285,7 +285,7 @@ func (h *authHandler) refresh(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, response.CodeTokenInvalid, "refresh token is invalid")
 		return
 	}
-	h.issueSession(c, u, familyID)
+	h.issueSession(c, u, familyID, http.StatusOK)
 }
 
 func (h *authHandler) logout(c *gin.Context) {
@@ -330,7 +330,7 @@ func (h *authHandler) changePassword(c *gin.Context) {
 	response.OK(c, gin.H{"changed": true}, nil)
 }
 
-func (h *authHandler) issueSession(c *gin.Context, u *user, familyID string) {
+func (h *authHandler) issueSession(c *gin.Context, u *user, familyID string, status int) {
 	accessToken, err := h.signAccessToken(u)
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, response.CodeInternal, "failed to issue access token")
@@ -351,7 +351,7 @@ func (h *authHandler) issueSession(c *gin.Context, u *user, familyID string) {
 	h.store.refreshByPlain[plain] = &refreshToken{Hash: hash, UserID: u.ID, FamilyID: familyID, ExpiresAt: expiresAt}
 	h.store.mu.Unlock()
 	setRefreshCookie(c, plain, h.refreshTTL)
-	response.OK(c, gin.H{"access_token": accessToken, "token_type": "Bearer", "expires_in": int(h.accessTTL.Seconds()), "user": publicUser(u)}, nil)
+	c.JSON(status, gin.H{"data": gin.H{"access_token": accessToken, "token_type": "Bearer", "expires_in": int(h.accessTTL.Seconds()), "user": publicUser(u)}})
 }
 
 func (h *authHandler) signAccessToken(u *user) (string, error) {
