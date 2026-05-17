@@ -10,10 +10,12 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500",
-  secondary: "bg-white text-slate-900 border border-slate-200 hover:bg-slate-50",
-  ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
-  danger: "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500",
+  primary:
+    "bg-[#2f5d3a] text-[#fffaf0] shadow-[#2f5d3a]/20 hover:bg-[#244b2f] focus-visible:ring-[#2f5d3a]",
+  secondary:
+    "border border-[#d8c4a5] bg-[#fffaf0] text-[#3f2f1f] shadow-[#7a4e2d]/10 hover:bg-[#f5ebd7]",
+  ghost: "bg-transparent text-[#5f4a33] hover:bg-[#efe3d1]/70",
+  danger: "bg-[#9b2f22] text-[#fffaf0] hover:bg-[#7e261c] focus-visible:ring-[#9b2f22]",
 };
 
 export function Button({

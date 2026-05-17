@@ -13,21 +13,21 @@ export function Table({ className, ...props }: TableProps) {
 }
 
 export function TableHeader({ className, ...props }: TableSectionProps) {
-  return <thead className={cn("border-b border-slate-200", className)} {...props} />;
+  return <thead className={cn("border-b border-[#d8c4a5]", className)} {...props} />;
 }
 
 export function TableBody({ className, ...props }: TableSectionProps) {
-  return <tbody className={cn("divide-y divide-slate-100", className)} {...props} />;
+  return <tbody className={cn("divide-y divide-[#eadbc2]", className)} {...props} />;
 }
 
 export function TableRow({ className, ...props }: TableRowProps) {
-  return <tr className={cn("transition hover:bg-slate-50", className)} {...props} />;
+  return <tr className={cn("transition hover:bg-[#f7eddc]", className)} {...props} />;
 }
 
 export function TableHead({ className, ...props }: TableHeadProps) {
-  return <th className={cn("px-4 py-3 text-left font-semibold text-slate-700", className)} {...props} />;
+  return <th className={cn("px-4 py-3 text-left font-bold text-[#5f4a33]", className)} {...props} />;
 }
 
 export function TableCell({ className, ...props }: TableCellProps) {
-  return <td className={cn("px-4 py-3 text-slate-700", className)} {...props} />;
+  return <td className={cn("px-4 py-3 text-[#5f4a33]", className)} {...props} />;
 }

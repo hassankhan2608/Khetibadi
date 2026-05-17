@@ -9,11 +9,11 @@ export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 const tones: Record<BadgeTone, string> = {
-  green: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
-  amber: "bg-amber-50 text-amber-700 ring-amber-600/20",
-  red: "bg-red-50 text-red-700 ring-red-600/20",
-  blue: "bg-sky-50 text-sky-700 ring-sky-600/20",
-  slate: "bg-slate-50 text-slate-700 ring-slate-600/20",
+  green: "bg-[#e3eadb] text-[#2f5d3a] ring-[#2f5d3a]/20",
+  amber: "bg-[#f3dfb4] text-[#7a4e2d] ring-[#b87924]/30",
+  red: "bg-[#f4d8ce] text-[#8a2f22] ring-[#8a2f22]/20",
+  blue: "bg-[#dbe9df] text-[#315a51] ring-[#315a51]/20",
+  slate: "bg-[#efe3d1] text-[#5f4a33] ring-[#7a4e2d]/15",
 };
 
 export function Badge({ className, tone = "slate", ...props }: BadgeProps) {

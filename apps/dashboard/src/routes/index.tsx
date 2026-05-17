@@ -1,9 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { isAuthenticated } from "../store/auth-store";
+import { ensureAuthSession } from "../lib/api";
 
 export const Route = createFileRoute("/")({
-  beforeLoad: () => {
-    throw redirect({ to: isAuthenticated() ? "/dashboard" : "/login" });
+  beforeLoad: async () => {
+    throw redirect({ to: (await ensureAuthSession()) ? "/dashboard" : "/login" });
   },
 });

@@ -14,8 +14,8 @@ export function EmptyState({ title, description }: { title: string; description:
   return (
     <Card>
       <CardContent className="py-10 text-center">
-        <p className="text-lg font-semibold text-slate-900">{title}</p>
-        <p className="mt-2 text-sm text-slate-500">{description}</p>
+        <p className="text-lg font-bold text-[#2d2217]">{title}</p>
+        <p className="mt-2 text-sm text-[#7a6548]">{description}</p>
       </CardContent>
     </Card>
   );
@@ -23,8 +23,8 @@ export function EmptyState({ title, description }: { title: string; description:
 
 export function ErrorState({ message, title }: { message: string; title: string }) {
   return (
-    <Card className="border-red-200 bg-red-50">
-      <CardContent className="text-sm text-red-700">
+    <Card className="border-[#d89b8b] bg-[#f4d8ce]">
+      <CardContent className="text-sm text-[#8a2f22]">
         <p className="font-semibold">{title}</p>
         <p className="mt-1">{message}</p>
       </CardContent>

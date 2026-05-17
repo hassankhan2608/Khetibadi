@@ -10,8 +10,8 @@ import { setAuth } from "../store/auth-store";
 
 export function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("farmer@example.com");
-  const [password, setPassword] = useState("Password1");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const mutation = useMutation({
     mutationFn: authApi.login,
     onSuccess: async (session) => {
@@ -26,26 +26,35 @@ export function LoginPage() {
   }
 
   return (
-    <AuthShell title="Sign in" subtitle="Use your Khetibadi account to continue.">
+    <AuthShell eyebrow="Welcome back" title="Sign in" subtitle="Continue to your farm workspace through the Khetibadi gateway.">
       <form className="space-y-4" onSubmit={submit}>
         <Field label="Email">
-          <Input type="email" value={email} onChange={(event) => { setEmail(event.target.value); }} required />
+          <Input
+            autoComplete="email"
+            placeholder="you@example.com"
+            type="email"
+            value={email}
+            onChange={(event) => { setEmail(event.target.value); }}
+            required
+          />
         </Field>
         <Field label="Password">
           <Input
             type="password"
+            autoComplete="current-password"
+            placeholder="Enter your password"
             value={password}
             onChange={(event) => { setPassword(event.target.value); }}
             required
           />
         </Field>
-        {mutation.error ? <p className="text-sm text-red-600">Invalid email or password.</p> : null}
+        {mutation.error ? <p className="text-sm font-semibold text-[#8a2f22]">Invalid email or password.</p> : null}
         <Button className="w-full" loading={mutation.isPending} type="submit">
           Sign in
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-slate-500">
-        New here? <Link className="font-semibold text-emerald-700" to="/register">Create account</Link>
+        <p className="mt-6 text-center text-sm text-[#7a6548]">
+        New here? <Link className="font-bold text-[#2f5d3a]" to="/register">Create account</Link>
       </p>
     </AuthShell>
   );
@@ -53,9 +62,9 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const router = useRouter();
-  const [name, setName] = useState("Demo Farmer");
-  const [email, setEmail] = useState("farmer@example.com");
-  const [password, setPassword] = useState("Password1");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const mutation = useMutation({
     mutationFn: authApi.register,
     onSuccess: async (session) => {
@@ -70,42 +79,76 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthShell title="Create account" subtitle="Start with the runnable local vertical slice.">
+    <AuthShell eyebrow="Namaste" title="Create account" subtitle="Set up your farmer workspace for farms, prices, scans, and advisory.">
       <form className="space-y-4" onSubmit={submit}>
         <Field label="Name">
-          <Input value={name} onChange={(event) => { setName(event.target.value); }} required />
+          <Input
+            autoComplete="name"
+            placeholder="Your name"
+            value={name}
+            onChange={(event) => { setName(event.target.value); }}
+            required
+          />
         </Field>
         <Field label="Email">
-          <Input type="email" value={email} onChange={(event) => { setEmail(event.target.value); }} required />
+          <Input
+            autoComplete="email"
+            placeholder="you@example.com"
+            type="email"
+            value={email}
+            onChange={(event) => { setEmail(event.target.value); }}
+            required
+          />
         </Field>
         <Field label="Password">
           <Input
             minLength={8}
             type="password"
+            autoComplete="new-password"
+            placeholder="At least 8 chars, one uppercase, one digit"
             value={password}
             onChange={(event) => { setPassword(event.target.value); }}
             required
           />
         </Field>
-        {mutation.error ? <p className="text-sm text-red-600">Unable to create account.</p> : null}
+        {mutation.error ? <p className="text-sm font-semibold text-[#8a2f22]">Unable to create account.</p> : null}
         <Button className="w-full" loading={mutation.isPending} type="submit">
           Create account
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-slate-500">
-        Already registered? <Link className="font-semibold text-emerald-700" to="/login">Sign in</Link>
+      <p className="mt-6 text-center text-sm text-[#7a6548]">
+        Already registered? <Link className="font-bold text-[#2f5d3a]" to="/login">Sign in</Link>
       </p>
     </AuthShell>
   );
 }
 
-function AuthShell({ children, title, subtitle }: { children: ReactNode; title: string; subtitle: string }) {
+function AuthShell({
+  children,
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  children: ReactNode;
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-amber-50 p-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-          <p className="mt-2 text-sm text-slate-500">{subtitle}</p>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-6">
+      <div className="absolute left-8 top-8 hidden rounded-full border border-[#d8c4a5] bg-[#fffaf0]/70 px-5 py-2 text-sm font-bold text-[#2f5d3a] shadow-sm md:block">
+        Khetibadi
+      </div>
+      <div className="absolute bottom-10 right-10 hidden max-w-xs rounded-[2rem] border border-[#d8c4a5] bg-[#2f5d3a] p-5 text-[#fffaf0] shadow-2xl md:block">
+        <p className="text-sm font-bold text-[#f3dfb4]">Soft Craft dashboard</p>
+        <p className="mt-2 text-sm text-[#efe3d1]">Dusty mitti tones, field green surfaces, and farmer-first workflows.</p>
+      </div>
+      <Card className="relative w-full max-w-md overflow-hidden">
+        <div className="h-2 bg-gradient-to-r from-[#2f5d3a] via-[#b87924] to-[#7a4e2d]" />
+        <CardHeader className="space-y-2">
+          <p className="text-sm font-extrabold uppercase tracking-[0.22em] text-[#b87924]">{eyebrow}</p>
+          <CardTitle className="text-3xl">{title}</CardTitle>
+          <p className="text-sm leading-6 text-[#6d5a40]">{subtitle}</p>
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>

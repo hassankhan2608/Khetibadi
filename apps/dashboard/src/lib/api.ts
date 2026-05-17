@@ -1,4 +1,4 @@
-import type { AxiosError} from "axios";
+import type { AxiosError } from "axios";
 import axios, { type AxiosRequestConfig } from "axios";
 
 import type {
@@ -48,22 +48,37 @@ api.interceptors.request.use((config) => {
 
 let refreshPromise: Promise<AuthSession> | null = null;
 
+async function refreshSession(): Promise<AuthSession> {
+  refreshPromise ??= authApi.refresh();
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+function isRefreshRequest(config: AxiosRequestConfig | undefined): boolean {
+  return config?.url === "/auth/refresh";
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const original = error.config as (AxiosRequestConfig & { _retry?: boolean }) | undefined;
-    if (error.response?.status !== 401 || original?._retry === true || original === undefined) {
+    if (
+      error.response?.status !== 401
+      || original?._retry === true
+      || original === undefined
+      || isRefreshRequest(original)
+    ) {
       return Promise.reject(error);
     }
     original._retry = true;
     try {
-      refreshPromise ??= authApi.refresh();
-      const session = await refreshPromise;
+      const session = await refreshSession();
       setAuth(session);
-      refreshPromise = null;
       return api(original);
     } catch (refreshError) {
-      refreshPromise = null;
       clearAuth();
       return Promise.reject(refreshError);
     }
@@ -91,6 +106,20 @@ export const authApi = {
     await api.put("/auth/password", req);
   },
 };
+
+export async function ensureAuthSession(): Promise<boolean> {
+  if (getAccessToken() !== null) {
+    return true;
+  }
+  try {
+    const session = await refreshSession();
+    setAuth(session);
+    return true;
+  } catch {
+    clearAuth();
+    return false;
+  }
+}
 
 export const farmApi = {
   async list(): Promise<Farm[]> {

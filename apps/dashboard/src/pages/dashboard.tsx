@@ -89,9 +89,10 @@ export function DashboardHomePage() {
 
   return (
     <section className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-emerald-700">Welcome back</p>
-        <h1 className="text-3xl font-bold text-slate-950">{user?.name ?? "Farmer"}</h1>
+      <div className="overflow-hidden rounded-[2rem] border border-[#d8c4a5] bg-[#2f5d3a] p-6 text-[#fffaf0] shadow-[0_22px_70px_rgba(47,93,58,0.18)] md:p-8">
+        <p className="text-sm font-extrabold uppercase tracking-[0.24em] text-[#f3dfb4]">Khetibadi overview</p>
+        <h1 className="mt-3 text-4xl font-black tracking-tight">Namaste, {user?.name ?? "Farmer"}</h1>
+        <p className="mt-3 max-w-2xl text-[#efe3d1]">A single mitti-green workspace for farms, crop advisory, plant health, mandi prices, and AI guidance.</p>
       </div>
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard label="Farms" value={farms.data?.length ?? 0} />
@@ -105,10 +106,10 @@ export function DashboardHomePage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {(prices.data ?? []).slice(0, 3).map((price) => (
-              <div className="flex items-center justify-between rounded-xl bg-slate-50 p-3" key={price.id}>
+              <div className="flex items-center justify-between rounded-2xl border border-[#e7d8bf] bg-[#f7eddc] p-4" key={price.id}>
                 <div>
-                  <p className="font-semibold capitalize text-slate-900">{price.commodity}</p>
-                  <p className="text-sm text-slate-500">{price.market}, {price.state}</p>
+                  <p className="font-bold capitalize text-[#2d2217]">{price.commodity}</p>
+                  <p className="text-sm text-[#7a6548]">{price.market}, {price.state}</p>
                 </div>
                 <Badge tone="green">₹{price.modal_price}/{price.unit}</Badge>
               </div>
@@ -119,7 +120,7 @@ export function DashboardHomePage() {
           <CardHeader>
             <CardTitle>Next actions</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm text-slate-600">
+          <CardContent className="space-y-3 text-sm leading-6 text-[#6d5a40]">
             <p>Create a farm boundary, add a soil sample, run crop recommendation, scan a plant image, and ask the AI assistant for localized guidance.</p>
             <p>The dashboard uses only the public auth gateway configured by <code>VITE_API_BASE_URL</code>.</p>
           </CardContent>
@@ -154,6 +155,7 @@ export function FarmMapPage() {
     <section className="grid gap-6 lg:grid-cols-[380px_1fr]">
       <Card>
         <CardHeader>
+          <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">My farms</p>
           <CardTitle>Add farm</CardTitle>
         </CardHeader>
         <CardContent>
@@ -162,7 +164,7 @@ export function FarmMapPage() {
             <TextField label="Crop" value={form.crop} onChange={(value) => { setForm({ ...form, crop: value }); }} />
             <TextField label="Soil type" value={form.soil_type} onChange={(value) => { setForm({ ...form, soil_type: value }); }} />
             <NumberField label="Area hectares" value={form.area_hectares} onChange={(value) => { setForm({ ...form, area_hectares: value }); }} />
-            {createFarm.error ? <p className="text-sm text-red-600">Unable to create farm.</p> : null}
+            {createFarm.error ? <p className="text-sm font-semibold text-[#8a2f22]">Unable to create farm.</p> : null}
             <Button loading={createFarm.isPending} type="submit">Create farm</Button>
           </form>
         </CardContent>
@@ -177,11 +179,11 @@ export function FarmMapPage() {
           {farms.data?.length === 0 ? <EmptyState title="No farms yet" description="Create your first farm to see it here." /> : null}
           <div className="grid gap-3">
             {(farms.data ?? []).map((farm) => (
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4" key={farm.id}>
+              <div className="rounded-[1.4rem] border border-[#d8c4a5] bg-[#f7eddc] p-4 shadow-sm" key={farm.id}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h3 className="font-semibold text-slate-950">{farm.name}</h3>
-                    <p className="text-sm text-slate-600">{farm.crop} · {farm.soil_type} · {farm.area_hectares} ha</p>
+                    <h3 className="font-bold text-[#2d2217]">{farm.name}</h3>
+                    <p className="text-sm text-[#7a6548]">{farm.crop} · {farm.soil_type} · {farm.area_hectares} ha</p>
                   </div>
                   <Badge tone="green">active</Badge>
                 </div>
@@ -214,6 +216,7 @@ export function CropAdvisorPage() {
     <section className="grid gap-6 lg:grid-cols-[420px_1fr]">
       <Card>
         <CardHeader>
+          <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">Soil to seed</p>
           <CardTitle>Crop advisor</CardTitle>
         </CardHeader>
         <CardContent>
@@ -236,6 +239,7 @@ export function CropAdvisorPage() {
 export function DiseaseScanPage() {
   const [file, setFile] = useState<File | null>(null);
   const detect = useMutation({ mutationFn: visionApi.detect });
+  const fileSelected = file !== null;
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -252,20 +256,22 @@ export function DiseaseScanPage() {
     <section className="grid gap-6 lg:grid-cols-[380px_1fr]">
       <Card>
         <CardHeader>
+          <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">Plant health</p>
           <CardTitle>Disease scan</CardTitle>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>
             <Label>Leaf image</Label>
             <Input accept="image/png,image/jpeg" onChange={updateFile} required type="file" />
-            {detect.error ? <p className="text-sm text-red-600">Scan failed. Upload a JPEG or PNG at least 64×64.</p> : null}
-            <Button disabled={file === null} loading={detect.isPending} type="submit">Scan plant</Button>
+            {fileSelected ? <p className="text-sm font-semibold text-[#2f5d3a]">Selected {file.name}</p> : null}
+            {detect.error ? <p className="text-sm font-semibold text-[#8a2f22]">Scan failed. Upload a JPEG or PNG at least 64×64.</p> : null}
+            <Button disabled={!fileSelected} loading={detect.isPending} type="submit">Scan plant</Button>
           </form>
         </CardContent>
       </Card>
       <ResultCard
         title="Detection result"
-        body={detect.data ? `${detect.data.disease} · ${Math.round(detect.data.confidence * 100)}% confidence · ${detect.data.model_mode}` : "Upload an image to run the local stub model."}
+        body={detect.isPending ? "Scanning the uploaded leaf image…" : detect.data ? `${detect.data.disease} · ${Math.round(detect.data.confidence * 100)}% confidence · ${detect.data.model_mode}` : "Upload an image to run the local stub model."}
       />
     </section>
   );
@@ -289,7 +295,7 @@ export function MarketPricesPage() {
     <section className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         <Card>
-          <CardHeader><CardTitle>Live market prices</CardTitle></CardHeader>
+          <CardHeader><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">Mandi watch</p><CardTitle>Market prices</CardTitle></CardHeader>
           <CardContent>
             {prices.error ? <ErrorState title="Prices unavailable" message="Market service did not return prices." /> : <PriceTable prices={prices.data ?? []} />}
           </CardContent>
@@ -311,7 +317,7 @@ export function MarketPricesPage() {
         <CardHeader><CardTitle>My alerts</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {(alerts.data ?? []).map((item) => (
-            <p className="rounded-xl bg-slate-50 p-3 text-sm" key={item.id}>{item.commodity} {item.direction} ₹{item.target_price}</p>
+            <p className="rounded-2xl border border-[#e7d8bf] bg-[#f7eddc] p-3 text-sm text-[#5f4a33]" key={item.id}>{item.commodity} {item.direction} ₹{item.target_price}</p>
           ))}
         </CardContent>
       </Card>
@@ -376,7 +382,7 @@ export function AIAssistantPage() {
         <CardContent className="space-y-2">
           <Button onClick={() => { createSession.mutate({ title: "Field advisory" }); }} variant="secondary">New chat</Button>
           {(sessions.data ?? []).map((session) => (
-            <button className="block w-full rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50" key={session.id} onClick={() => { setActiveSession(session.id); }} type="button">
+            <button className="block w-full rounded-2xl border border-[#d8c4a5] bg-[#fffaf0] px-3 py-2 text-left text-sm font-semibold text-[#5f4a33] hover:bg-[#f7eddc]" key={session.id} onClick={() => { setActiveSession(session.id); }} type="button">
               {session.title}
             </button>
           ))}
@@ -385,11 +391,11 @@ export function AIAssistantPage() {
       <Card>
         <CardHeader><CardTitle>AI assistant</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="max-h-80 space-y-3 overflow-auto rounded-2xl bg-slate-50 p-4">
+          <div className="max-h-80 space-y-3 overflow-auto rounded-[1.5rem] border border-[#e7d8bf] bg-[#f7eddc] p-4">
             {(messages.data ?? []).map((item) => (
-              <p className="rounded-xl bg-white p-3 text-sm shadow-sm" key={item.id}><strong>{item.role}:</strong> {item.content}</p>
+              <p className="rounded-2xl bg-[#fffaf0] p-3 text-sm text-[#5f4a33] shadow-sm" key={item.id}><strong>{item.role}:</strong> {item.content}</p>
             ))}
-            {streamText !== "" ? <pre className="whitespace-pre-wrap rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">{streamText}</pre> : null}
+            {streamText !== "" ? <pre className="whitespace-pre-wrap rounded-2xl bg-[#e3eadb] p-3 text-sm text-[#2f5d3a]">{streamText}</pre> : null}
           </div>
           <form className="space-y-3" onSubmit={(event) => { void submit(event); }}>
             <Textarea value={message} onChange={(event) => { setMessage(event.target.value); }} />
@@ -405,8 +411,8 @@ export function SettingsPage() {
   return (
     <Card>
       <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
-      <CardContent className="space-y-3 text-sm text-slate-600">
-        <p>Access tokens are held in memory only. Refresh is handled by the gateway cookie.</p>
+      <CardContent className="space-y-3 text-sm leading-6 text-[#6d5a40]">
+        <p>Memory-only access tokens are restored by the gateway refresh cookie after browser reloads.</p>
         <p>Public API origin: <code>{apiBaseURL()}</code></p>
       </CardContent>
     </Card>
@@ -414,11 +420,11 @@ export function SettingsPage() {
 }
 
 function StatCard({ label, value }: { label: string; value: number }) {
-  return <Card><CardContent><p className="text-sm text-slate-500">{label}</p><p className="mt-2 text-3xl font-bold text-slate-950">{value}</p></CardContent></Card>;
+  return <Card><CardContent><p className="text-sm font-semibold text-[#7a6548]">{label}</p><p className="mt-2 text-4xl font-black text-[#2f5d3a]">{value}</p></CardContent></Card>;
 }
 
 function ResultCard({ body, title }: { body: string; title: string }) {
-  return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><p className="text-slate-700">{body}</p></CardContent></Card>;
+  return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><p className="text-[#5f4a33]">{body}</p></CardContent></Card>;
 }
 
 function TextField({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {

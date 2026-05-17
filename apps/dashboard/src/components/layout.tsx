@@ -23,31 +23,33 @@ export function DashboardLayout() {
 
   async function logout(): Promise<void> {
     await authApi.logout().catch(() => undefined);
+    await router.navigate({ to: "/login" });
     clearAuth();
     queryClient.clear();
-    await router.navigate({ to: "/login" });
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
-      <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-slate-200 bg-white p-6 lg:block">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-600 text-white">
+    <div className="min-h-screen text-[#2d2217]">
+      <aside className="fixed inset-y-0 left-0 hidden w-[19rem] border-r border-[#d8c4a5] bg-[#2f5d3a] p-6 text-[#fffaf0] shadow-[18px_0_55px_rgba(47,93,58,0.18)] lg:block">
+        <div className="rounded-[1.75rem] border border-[#f3dfb4]/25 bg-[#fffaf0]/10 p-4 backdrop-blur">
+          <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f3dfb4] text-[#2f5d3a] shadow-lg shadow-[#1d3f27]/20">
             <Sprout aria-hidden="true" />
           </div>
           <div>
-            <p className="text-lg font-bold">Khetibadi</p>
-            <p className="text-sm text-slate-500">Farmer intelligence</p>
+            <p className="text-xl font-black tracking-tight">Khetibadi</p>
+            <p className="text-sm text-[#efe3d1]">Mitti se market tak</p>
+          </div>
           </div>
         </div>
-        <nav className="mt-10 space-y-1" aria-label="Primary navigation">
+        <nav className="mt-8 space-y-2" aria-label="Primary navigation">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link
                 key={item.to}
                 to={item.to}
-                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700 [&.active]:bg-emerald-50 [&.active]:text-emerald-700"
+                className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-[#e9dcc5] transition hover:bg-[#fffaf0]/10 hover:text-white [&.active]:bg-[#f3dfb4] [&.active]:text-[#2f5d3a] [&.active]:shadow-lg [&.active]:shadow-[#1e3d27]/20"
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
                 {item.label}
@@ -55,13 +57,17 @@ export function DashboardLayout() {
             );
           })}
         </nav>
+        <div className="absolute bottom-6 left-6 right-6 rounded-[1.5rem] border border-[#f3dfb4]/25 bg-[#244b2f] p-4 text-sm text-[#efe3d1]">
+          <p className="font-bold text-[#f3dfb4]">Today’s rhythm</p>
+          <p className="mt-1">Check mandi prices, scan leaves, and plan soil nutrition from one gateway.</p>
+        </div>
       </aside>
-      <main className="lg:pl-72">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 px-6 py-4 backdrop-blur">
+      <main className="lg:pl-[19rem]">
+        <header className="sticky top-0 z-10 border-b border-[#d8c4a5] bg-[#fffaf0]/85 px-6 py-4 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm text-slate-500">Welcome back</p>
-              <h1 className="text-xl font-semibold">{user?.name ?? "Farmer"}</h1>
+              <p className="text-sm font-semibold text-[#b87924]">Welcome back</p>
+              <h1 className="text-2xl font-black tracking-tight text-[#2d2217]">{user?.name ?? "Farmer"}</h1>
             </div>
             <Button variant="secondary" type="button" onClick={() => void logout()}>
               <LogOut className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -69,7 +75,7 @@ export function DashboardLayout() {
             </Button>
           </div>
         </header>
-        <div className="p-6">
+        <div className="p-5 md:p-8">
           <Outlet />
         </div>
       </main>
