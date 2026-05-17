@@ -226,8 +226,8 @@ export function CropAdvisorPage() {
       </Card>
       <div className="grid gap-4">
         <ResultCard title="Crop recommendation" body={recommend.data ? `${recommend.data.crop} (${Math.round(recommend.data.confidence * 100)}%)` : "Submit soil and climate data."} />
-        <ResultCard title="Yield forecast" body={yieldPredict.data ? `${yieldPredict.data.estimated_total_tonnes} tonnes total` : "Waiting for forecast."} />
-        <ResultCard title="Fertilizer plan" body={fertilizer.data ? `N ${fertilizer.data.nitrogen_kg_per_hectare} / P ${fertilizer.data.phosphorus_kg_per_hectare} / K ${fertilizer.data.potassium_kg_per_hectare} kg/ha` : "Waiting for plan."} />
+        <ResultCard title="Yield forecast" body={yieldPredict.data ? `${yieldPredict.data.predicted_yield_tonnes} tonnes total` : "Waiting for forecast."} />
+        <ResultCard title="Fertilizer plan" body={fertilizer.data ? `N ${fertilizer.data.nitrogen_kg_per_ha} / P ${fertilizer.data.phosphorus_kg_per_ha} / K ${fertilizer.data.potassium_kg_per_ha} kg/ha` : "Waiting for plan."} />
       </div>
     </section>
   );

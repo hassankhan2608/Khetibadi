@@ -17,9 +17,8 @@ export interface CropRecommendation {
   crop: string;
   confidence: number;
   alternatives: string[];
-  reasons: string[];
   model_mode: "stub";
-  warning?: string;
+  warning: string | null;
 }
 
 export interface YieldPredictionRequest extends CropFeatures {
@@ -30,11 +29,10 @@ export interface YieldPredictionRequest extends CropFeatures {
 
 export interface YieldPrediction {
   crop: string;
-  estimated_yield_tonnes_per_hectare: number;
-  estimated_total_tonnes: number;
-  confidence: number;
+  predicted_yield_tonnes: number;
+  yield_per_hectare_tonnes: number;
   model_mode: "stub";
-  warning?: string;
+  warning: string | null;
 }
 
 export interface FertilizerRecommendationRequest extends CropFeatures {
@@ -43,10 +41,10 @@ export interface FertilizerRecommendationRequest extends CropFeatures {
 }
 
 export interface FertilizerRecommendation {
-  nitrogen_kg_per_hectare: number;
-  phosphorus_kg_per_hectare: number;
-  potassium_kg_per_hectare: number;
-  notes: string[];
+  recommendation: string;
+  nitrogen_kg_per_ha: number;
+  phosphorus_kg_per_ha: number;
+  potassium_kg_per_ha: number;
   model_mode: "stub";
-  warning?: string;
+  warning: string | null;
 }
