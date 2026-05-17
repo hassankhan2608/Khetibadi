@@ -1,0 +1,57 @@
+.git
+.gitignore
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Node/Bun build artifacts and caches
+node_modules/
+**/node_modules/
+.turbo/
+**/.turbo/
+dist/
+**/dist/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# Python environments and caches
+.venv/
+venv/
+**/.venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+
+# Go build outputs
+bin/
+vendor/
+apps/*/server
+apps/*/worker
+apps/*/cmd/*/server
+apps/*/cmd/*/worker
+
+# Generated ML artifacts
+apps/ml-crop/models/*.pkl
+apps/ml-vision/models/*.pth
+apps/ml-vision/models/*.pt
+apps/ml-vision/models/*.onnx
+models/**/*.pkl
+models/**/*.pth
+models/**/*.pt
+models/**/*.onnx
+
+# Editor/OS noise and logs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+logs/
