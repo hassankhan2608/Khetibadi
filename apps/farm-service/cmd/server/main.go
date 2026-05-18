@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,14 +30,21 @@ const (
 	serviceName    = "farm-service"
 	shutdownGrace  = 15 * time.Second
 	readHdrTimeout = 10 * time.Second
+	weatherTimeout = 8 * time.Second
 	maxFarmAreaHa  = 10000
 )
 
 type appConfig struct {
-	Port       string `envconfig:"PORT" default:"8001"`
-	Env        string `envconfig:"APP_ENV" default:"development"`
-	LogLevel   string `envconfig:"LOG_LEVEL" default:"info"`
-	HMACSecret string `envconfig:"HMAC_SECRET"`
+	Port                   string `envconfig:"PORT" default:"8001"`
+	Env                    string `envconfig:"APP_ENV" default:"development"`
+	LogLevel               string `envconfig:"LOG_LEVEL" default:"info"`
+	HMACSecret             string `envconfig:"HMAC_SECRET"`
+	OpenWeatherAPIKey      string `envconfig:"OPENWEATHER_API_KEY"`
+	OpenWeatherMapAPIKey   string `envconfig:"OPENWEATHERMAP_API_KEY"`
+	OpenWeatherCurrentURL  string `envconfig:"OPENWEATHER_CURRENT_URL" default:"https://api.openweathermap.org/data/2.5/weather"`
+	OpenWeatherUnits       string `envconfig:"OPENWEATHER_UNITS" default:"metric"`
+	OpenWeatherLang        string `envconfig:"OPENWEATHER_LANG" default:"en"`
+	WeatherCacheTTLSeconds int    `envconfig:"WEATHER_CACHE_TTL" default:"10800"`
 }
 
 type farm struct {
@@ -69,10 +77,18 @@ type farmStore struct {
 	mu          sync.RWMutex
 	farms       map[string]*farm
 	soilSamples map[string][]*soilSample
+	weather     map[string]weatherCacheEntry
 }
 
 type farmHandler struct {
-	store *farmStore
+	client *http.Client
+	store  *farmStore
+	cfg    *appConfig
+}
+
+type weatherCacheEntry struct {
+	payload   gin.H
+	expiresAt time.Time
 }
 
 type farmRequest struct {
@@ -93,6 +109,29 @@ type soilSampleRequest struct {
 	Moisture    float64 `json:"moisture"`
 }
 
+type openWeatherResponse struct {
+	Main struct {
+		Temp      float64 `json:"temp"`
+		FeelsLike float64 `json:"feels_like"`
+		Humidity  int     `json:"humidity"`
+		Pressure  int     `json:"pressure"`
+	} `json:"main"`
+	Wind struct {
+		Speed float64 `json:"speed"`
+		Deg   int     `json:"deg"`
+	} `json:"wind"`
+	Clouds struct {
+		All int `json:"all"`
+	} `json:"clouds"`
+	Rain    map[string]float64 `json:"rain"`
+	Snow    map[string]float64 `json:"snow"`
+	Weather []struct {
+		Main        string `json:"main"`
+		Description string `json:"description"`
+	} `json:"weather"`
+	ObservedAt int64 `json:"dt"`
+}
+
 func main() {
 	var cfg appConfig
 	config.MustLoad("", &cfg)
@@ -103,7 +142,11 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	h := &farmHandler{store: newFarmStore()}
+	h := &farmHandler{
+		cfg:    &cfg,
+		client: &http.Client{Timeout: weatherTimeout},
+		store:  newFarmStore(),
+	}
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -143,7 +186,11 @@ func main() {
 }
 
 func newFarmStore() *farmStore {
-	return &farmStore{farms: make(map[string]*farm), soilSamples: make(map[string][]*soilSample)}
+	return &farmStore{
+		farms:       make(map[string]*farm),
+		soilSamples: make(map[string][]*soilSample),
+		weather:     make(map[string]weatherCacheEntry),
+	}
 }
 
 func (h *farmHandler) registerRoutes(r gin.IRoutes) {
@@ -317,19 +364,112 @@ func (h *farmHandler) getWeather(c *gin.Context) {
 	if !ok {
 		return
 	}
-	seed := float64(len(item.ID) + len(item.Name))
-	weather := gin.H{
-		"farm_id":      item.ID,
-		"source":       "stub",
-		"condition":    "partly_cloudy",
-		"temperature":  math.Round((24+math.Mod(seed, 9))*10) / 10,
-		"humidity":     int(55 + math.Mod(seed, 25)),
-		"wind_speed":   math.Round((3+math.Mod(seed, 5))*10) / 10,
-		"rainfall_mm":  math.Round(math.Mod(seed, 12)*10) / 10,
-		"cached":       true,
-		"generated_at": time.Now().UTC(),
+	if cached, ok := h.cachedWeather(item.ID); ok {
+		response.OK(c, cached, nil)
+		return
 	}
+	latitude, longitude, ok := boundaryCentroid(item.Boundary)
+	if !ok {
+		response.Error(c, http.StatusUnprocessableEntity, response.CodeUnprocessable, "farm boundary has no coordinates")
+		return
+	}
+	weather, err := h.fetchWeather(c.Request.Context(), item.ID, latitude, longitude)
+	if err != nil {
+		log.Error().Err(err).Str("farm_id", item.ID).Msg("openweather request failed")
+		response.Error(c, http.StatusBadGateway, response.CodeUpstream, "weather service unavailable")
+		return
+	}
+	h.storeWeather(item.ID, weather)
 	response.OK(c, weather, nil)
+}
+
+func (h *farmHandler) cachedWeather(farmID string) (gin.H, bool) {
+	h.store.mu.RLock()
+	entry, ok := h.store.weather[farmID]
+	h.store.mu.RUnlock()
+	if !ok || time.Now().UTC().After(entry.expiresAt) {
+		return nil, false
+	}
+	clone := gin.H{}
+	for key, value := range entry.payload {
+		clone[key] = value
+	}
+	clone["cached"] = true
+	return clone, true
+}
+
+func (h *farmHandler) storeWeather(farmID string, payload gin.H) {
+	clone := gin.H{}
+	for key, value := range payload {
+		clone[key] = value
+	}
+	h.store.mu.Lock()
+	h.store.weather[farmID] = weatherCacheEntry{
+		payload:   clone,
+		expiresAt: time.Now().UTC().Add(time.Duration(h.cfg.WeatherCacheTTLSeconds) * time.Second),
+	}
+	h.store.mu.Unlock()
+}
+
+func (h *farmHandler) fetchWeather(ctx context.Context, farmID string, latitude, longitude float64) (gin.H, error) {
+	apiKey := openWeatherAPIKey(h.cfg)
+	if apiKey == "" {
+		return nil, errors.New("OPENWEATHER_API_KEY is required")
+	}
+	endpoint, err := url.Parse(h.cfg.OpenWeatherCurrentURL)
+	if err != nil {
+		return nil, err
+	}
+	query := endpoint.Query()
+	query.Set("lat", strconv.FormatFloat(latitude, 'f', 6, 64))
+	query.Set("lon", strconv.FormatFloat(longitude, 'f', 6, 64))
+	query.Set("appid", apiKey)
+	query.Set("units", valueOrDefault(h.cfg.OpenWeatherUnits, "metric"))
+	query.Set("lang", valueOrDefault(h.cfg.OpenWeatherLang, "en"))
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "khetibadi-farm-service/1.0")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Error().Err(err).Msg("close weather response body")
+		}
+	}()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.New("openweather returned status " + strconv.Itoa(resp.StatusCode))
+	}
+	var payload openWeatherResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	condition, description := weatherCondition(&payload)
+	return gin.H{
+		"farm_id":           farmID,
+		"source":            "openweathermap",
+		"condition":         condition,
+		"description":       description,
+		"temperature":       payload.Main.Temp,
+		"feels_like":        payload.Main.FeelsLike,
+		"humidity":          payload.Main.Humidity,
+		"pressure":          payload.Main.Pressure,
+		"wind_speed":        payload.Wind.Speed,
+		"wind_degrees":      payload.Wind.Deg,
+		"cloudiness":        payload.Clouds.All,
+		"rainfall_mm":       precipitation(payload.Rain),
+		"snowfall_mm":       precipitation(payload.Snow),
+		"latitude":          latitude,
+		"longitude":         longitude,
+		"observed_at":       time.Unix(payload.ObservedAt, 0).UTC(),
+		"generated_at":      time.Now().UTC(),
+		"cached":            false,
+		"cache_ttl_seconds": h.cfg.WeatherCacheTTLSeconds,
+	}, nil
 }
 
 func (h *farmHandler) findOwnedFarm(c *gin.Context, farmID string) (*farm, bool) {
@@ -367,6 +507,86 @@ func prepareFarmRequest(c *gin.Context, req *farmRequest) (farmRequest, bool) {
 		return farmRequest{}, false
 	}
 	return prepared, true
+}
+
+func boundaryCentroid(boundary json.RawMessage) (latitude, longitude float64, ok bool) {
+	var geometry struct {
+		Type        string          `json:"type"`
+		Coordinates json.RawMessage `json:"coordinates"`
+	}
+	if err := json.Unmarshal(boundary, &geometry); err != nil {
+		return 0, 0, false
+	}
+	var points [][2]float64
+	switch strings.ToLower(geometry.Type) {
+	case "polygon":
+		points = polygonPoints(geometry.Coordinates)
+	case "feature":
+		var feature struct {
+			Geometry json.RawMessage `json:"geometry"`
+		}
+		if err := json.Unmarshal(boundary, &feature); err != nil {
+			return 0, 0, false
+		}
+		return boundaryCentroid(feature.Geometry)
+	default:
+		return 0, 0, false
+	}
+	if len(points) == 0 {
+		return 0, 0, false
+	}
+	var longitudeSum, latitudeSum float64
+	for _, point := range points {
+		longitudeSum += point[0]
+		latitudeSum += point[1]
+	}
+	return latitudeSum / float64(len(points)), longitudeSum / float64(len(points)), true
+}
+
+func polygonPoints(raw json.RawMessage) [][2]float64 {
+	var rings [][][]float64
+	if err := json.Unmarshal(raw, &rings); err != nil || len(rings) == 0 {
+		return nil
+	}
+	points := make([][2]float64, 0, len(rings[0]))
+	for _, point := range rings[0] {
+		if len(point) < 2 {
+			continue
+		}
+		points = append(points, [2]float64{point[0], point[1]})
+	}
+	return points
+}
+
+func openWeatherAPIKey(cfg *appConfig) string {
+	if strings.TrimSpace(cfg.OpenWeatherAPIKey) != "" {
+		return strings.TrimSpace(cfg.OpenWeatherAPIKey)
+	}
+	return strings.TrimSpace(cfg.OpenWeatherMapAPIKey)
+}
+
+func valueOrDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func weatherCondition(payload *openWeatherResponse) (main, description string) {
+	if len(payload.Weather) == 0 {
+		return "unknown", "unknown"
+	}
+	return payload.Weather[0].Main, payload.Weather[0].Description
+}
+
+func precipitation(values map[string]float64) float64 {
+	if values == nil {
+		return 0
+	}
+	if value, ok := values["1h"]; ok {
+		return value
+	}
+	return values["3h"]
 }
 
 func parseCollectedAt(c *gin.Context, raw string) (time.Time, bool) {
