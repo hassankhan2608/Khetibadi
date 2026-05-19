@@ -55,11 +55,14 @@ class YieldPredictionRequest(CropFeatures):
     crop: str = Field(min_length=1, max_length=80)
     area_hectares: float = Field(gt=0, le=10000)
     season: str = Field(default="kharif", min_length=1, max_length=40)
+    state: str = Field(default="unknown", min_length=1, max_length=80)
+    district: str = Field(default="unknown", min_length=1, max_length=120)
 
 
 class FertilizerRecommendationRequest(CropFeatures):
     crop: str = Field(min_length=1, max_length=80)
     soil_type: str = Field(default="loamy", min_length=1, max_length=40)
+    moisture: float = Field(default=30, ge=0, le=100)
 
 
 class BatchRecommendationRequest(BaseModel):
@@ -92,6 +95,8 @@ class FertilizerRecommendation(BaseModel):
 
 
 crop_artifact: CropArtifact | None = None
+yield_artifact: CropArtifact | None = None
+fertilizer_artifact: CropArtifact | None = None
 
 
 @asynccontextmanager
@@ -168,12 +173,18 @@ async def health() -> dict[str, object]:
         settings.fertilizer_model_path,
     ]
     artifacts_present = all(Path(path).exists() for path in model_paths)
-    mode = "model" if crop_artifact is not None else "stub"
+    loaded_artifacts = {
+        "crop": crop_artifact is not None,
+        "yield": yield_artifact is not None,
+        "fertilizer": fertilizer_artifact is not None,
+    }
+    mode = "model" if all(loaded_artifacts.values()) else "stub"
     return {
         "status": "ok" if artifacts_present or settings.ml_allow_stub_mode else "degraded",
         "service": SERVICE_NAME,
         "model_mode": mode,
         "model_artifacts_present": artifacts_present,
+        "loaded_artifacts": loaded_artifacts,
     }
 
 
@@ -190,6 +201,12 @@ async def recommend_batch(
     req: BatchRecommendationRequest,
     _: AuthDependency,
 ) -> dict[str, list[CropRecommendation]]:
+    if crop_artifact is not None:
+        return {
+            "results": [
+                predict_crop_recommendation(record, crop_artifact) for record in req.records
+            ],
+        }
     ensure_stub_available()
     return {"results": [build_crop_recommendation(record) for record in req.records]}
 
@@ -204,6 +221,8 @@ async def recommend_batch_alias(
 
 @app.post("/ml/yield/predict")
 async def predict_yield(req: YieldPredictionRequest, _: AuthDependency) -> YieldPrediction:
+    if yield_artifact is not None:
+        return predict_yield_model(req, yield_artifact)
     ensure_stub_available()
     base = 1.8 + (req.rainfall / 1200) + ((req.ph - 5.5) * 0.2)
     nutrient_boost = (req.nitrogen + req.phosphorus + req.potassium) / 900
@@ -227,6 +246,8 @@ async def recommend_fertilizer(
     req: FertilizerRecommendationRequest,
     _: AuthDependency,
 ) -> FertilizerRecommendation:
+    if fertilizer_artifact is not None:
+        return predict_fertilizer_model(req, fertilizer_artifact)
     ensure_stub_available()
     nitrogen = max(0.0, 120 - req.nitrogen)
     phosphorus = max(0.0, 60 - req.phosphorus)
@@ -305,36 +326,64 @@ def ensure_stub_available() -> None:
 
 
 def load_artifacts(settings: Settings) -> None:
-    global crop_artifact
+    global crop_artifact, fertilizer_artifact, yield_artifact
 
     crop_path = Path(settings.crop_model_path)
-    if crop_path.exists():
-        crop_artifact = load_crop_artifact(crop_path)
+    crop_artifact = load_artifact(crop_path, crop_features(), settings.ml_allow_stub_mode)
+    yield_artifact = load_artifact(
+        Path(settings.yield_model_path),
+        yield_features(),
+        settings.ml_allow_stub_mode,
+    )
+    fertilizer_artifact = load_artifact(
+        Path(settings.fertilizer_model_path),
+        fertilizer_features(),
+        settings.ml_allow_stub_mode,
+    )
+    if crop_artifact is not None:
         logger.info(
             "crop model loaded",
             extra={"service": SERVICE_NAME, "model_path": str(crop_path)},
         )
-        return
-    crop_artifact = None
-    if not settings.ml_allow_stub_mode:
-        raise RuntimeError(f"crop model artifact not found: {crop_path}")
+    if yield_artifact is not None:
+        logger.info(
+            "yield model loaded",
+            extra={"service": SERVICE_NAME, "model_path": settings.yield_model_path},
+        )
+    if fertilizer_artifact is not None:
+        logger.info(
+            "fertilizer model loaded",
+            extra={"service": SERVICE_NAME, "model_path": settings.fertilizer_model_path},
+        )
+
+
+def load_artifact(
+    path: Path,
+    expected_features: list[str],
+    allow_stub: bool,
+) -> CropArtifact | None:
+    if path.exists():
+        return load_model_artifact(path, expected_features)
+    if not allow_stub:
+        raise RuntimeError(f"model artifact not found: {path}")
     logger.warning(
-        "crop model missing; explicit stub mode enabled",
-        extra={"service": SERVICE_NAME, "model_path": str(crop_path)},
+        "model missing; explicit stub mode enabled",
+        extra={"service": SERVICE_NAME, "model_path": str(path)},
     )
+    return None
 
 
-def load_crop_artifact(path: Path) -> CropArtifact:
+def load_model_artifact(path: Path, expected_features: list[str]) -> CropArtifact:
     loaded = joblib.load(path)
     if not isinstance(loaded, dict):
-        raise RuntimeError("crop model artifact must be a dict")
+        raise RuntimeError("model artifact must be a dict")
     model = loaded.get("model")
     metadata = loaded.get("metadata")
     if model is None or not isinstance(metadata, dict):
-        raise RuntimeError("crop model artifact missing model or metadata")
+        raise RuntimeError("model artifact missing model or metadata")
     features = metadata.get("features")
-    if features != crop_features():
-        raise RuntimeError("crop model feature order does not match service contract")
+    if features != expected_features:
+        raise RuntimeError("model feature order does not match service contract")
     return CropArtifact(model=model, metadata=metadata)
 
 
@@ -363,6 +412,38 @@ def predict_crop_recommendation(
     )
 
 
+def predict_yield_model(req: YieldPredictionRequest, artifact: CropArtifact) -> YieldPrediction:
+    frame = pd.DataFrame([yield_feature_row(req)], columns=yield_features())
+    prediction = float(cast(Any, artifact.model).predict(frame)[0])
+    yield_per_hectare = max(0.0, prediction)
+    return YieldPrediction(
+        crop=req.crop.strip().lower(),
+        predicted_yield_tonnes=round(yield_per_hectare * req.area_hectares, 2),
+        yield_per_hectare_tonnes=round(yield_per_hectare, 2),
+        model_mode="model",
+        warning=None,
+    )
+
+
+def predict_fertilizer_model(
+    req: FertilizerRecommendationRequest,
+    artifact: CropArtifact,
+) -> FertilizerRecommendation:
+    frame = pd.DataFrame([fertilizer_feature_row(req)], columns=fertilizer_features())
+    recommendation = str(cast(Any, artifact.model).predict(frame)[0])
+    nitrogen = max(0.0, 120 - req.nitrogen)
+    phosphorus = max(0.0, 60 - req.phosphorus)
+    potassium = max(0.0, 80 - req.potassium)
+    return FertilizerRecommendation(
+        recommendation=recommendation,
+        nitrogen_kg_per_ha=round(nitrogen, 1),
+        phosphorus_kg_per_ha=round(phosphorus, 1),
+        potassium_kg_per_ha=round(potassium, 1),
+        model_mode="model",
+        warning=None,
+    )
+
+
 def crop_feature_row(req: CropFeatures) -> dict[str, float]:
     return {
         "nitrogen": req.nitrogen,
@@ -370,6 +451,31 @@ def crop_feature_row(req: CropFeatures) -> dict[str, float]:
         "potassium": req.potassium,
         "temperature": req.temperature,
         "humidity": req.humidity,
+        "ph": req.ph,
+        "rainfall": req.rainfall,
+    }
+
+
+def yield_feature_row(req: YieldPredictionRequest) -> dict[str, str | float]:
+    return {
+        "state": req.state.strip().lower(),
+        "district": req.district.strip().lower(),
+        "season": req.season.strip().lower(),
+        "crop": req.crop.strip().lower(),
+        "area_hectares": req.area_hectares,
+    }
+
+
+def fertilizer_feature_row(req: FertilizerRecommendationRequest) -> dict[str, str | float]:
+    return {
+        "soil_type": req.soil_type.strip().lower(),
+        "crop": req.crop.strip().lower(),
+        "nitrogen": req.nitrogen,
+        "phosphorus": req.phosphorus,
+        "potassium": req.potassium,
+        "temperature": req.temperature,
+        "humidity": req.humidity,
+        "moisture": req.moisture,
         "ph": req.ph,
         "rainfall": req.rainfall,
     }
@@ -409,6 +515,25 @@ def crop_features() -> list[str]:
         "potassium",
         "temperature",
         "humidity",
+        "ph",
+        "rainfall",
+    ]
+
+
+def yield_features() -> list[str]:
+    return ["state", "district", "season", "crop", "area_hectares"]
+
+
+def fertilizer_features() -> list[str]:
+    return [
+        "soil_type",
+        "crop",
+        "nitrogen",
+        "phosphorus",
+        "potassium",
+        "temperature",
+        "humidity",
+        "moisture",
         "ph",
         "rainfall",
     ]
