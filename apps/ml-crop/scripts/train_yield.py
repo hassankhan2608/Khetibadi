@@ -22,31 +22,34 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 LOGGER = logging.getLogger("train-yield")
 RANDOM_STATE = 42
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATASET_URL = (
+DEFAULT_DATASET_SOURCE = "kaggle://nikhilmahajan29/crop-production-statistics-india/APY.csv"
+DEFAULT_DOWNLOAD_URL = (
     "https://raw.githubusercontent.com/ankitaS11/Crop-Yield-Prediction-in-India-using-ML/"
     "main/crop_production.csv"
 )
-DEFAULT_DATASET_PATH = REPO_ROOT / "data/yield/crop_production.csv"
+DEFAULT_DATASET_PATH = REPO_ROOT / "data/kaggle/crop-production-statistics-india/APY.csv"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "apps/ml-crop/models/yield_model.pkl"
 NUMERIC_FEATURES = ["area_hectares"]
 CATEGORICAL_FEATURES = ["state", "district", "season", "crop"]
 FEATURES = [*CATEGORICAL_FEATURES, *NUMERIC_FEATURES]
-SOURCE_COLUMNS = [
-    "State_Name",
-    "District_Name",
-    "Crop_Year",
-    "Season",
-    "Crop",
-    "Area",
-    "Production",
-]
+COLUMN_ALIASES = {
+    "state": ["State_Name", "State"],
+    "district": ["District_Name", "District"],
+    "crop_year": ["Crop_Year"],
+    "season": ["Season"],
+    "crop": ["Crop"],
+    "area_hectares": ["Area"],
+    "production_tonnes": ["Production"],
+    "yield_per_hectare_tonnes": ["Yield"],
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument("--source-url", default=DEFAULT_DATASET_URL)
+    parser.add_argument("--source-url", default=DEFAULT_DATASET_SOURCE)
+    parser.add_argument("--download-url", default=DEFAULT_DOWNLOAD_URL)
     parser.add_argument("--download", action="store_true")
     return parser.parse_args()
 
@@ -54,7 +57,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
-    dataset_path = ensure_dataset(args.dataset, args.source_url, args.download)
+    dataset_path = ensure_dataset(args.dataset, args.download_url, args.download)
     frame = load_dataset(dataset_path)
     artifact = train(frame, dataset_path, args.source_url)
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -75,32 +78,42 @@ def ensure_dataset(path: Path, source_url: str, download: bool) -> Path:
 
 def load_dataset(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path)
-    missing = [column for column in SOURCE_COLUMNS if column not in frame.columns]
-    if missing:
-        raise ValueError(f"yield dataset missing columns: {missing}")
-    frame = frame[SOURCE_COLUMNS].dropna()
-    frame = frame.rename(
-        columns={
-            "State_Name": "state",
-            "District_Name": "district",
-            "Crop_Year": "crop_year",
-            "Season": "season",
-            "Crop": "crop",
-            "Area": "area_hectares",
-            "Production": "production_tonnes",
-        },
-    )
+    frame.columns = [str(column).strip() for column in frame.columns]
+    frame = normalize_columns(frame)
     frame["area_hectares"] = pd.to_numeric(frame["area_hectares"], errors="coerce")
     frame["production_tonnes"] = pd.to_numeric(frame["production_tonnes"], errors="coerce")
+    if "yield_per_hectare_tonnes" in frame.columns:
+        frame["yield_per_hectare_tonnes"] = pd.to_numeric(
+            frame["yield_per_hectare_tonnes"],
+            errors="coerce",
+        )
+    else:
+        frame["yield_per_hectare_tonnes"] = frame["production_tonnes"] / frame["area_hectares"]
     frame = frame.dropna(subset=["area_hectares", "production_tonnes"])
     frame = frame[(frame["area_hectares"] > 0) & (frame["production_tonnes"] > 0)]
-    frame["yield_per_hectare_tonnes"] = frame["production_tonnes"] / frame["area_hectares"]
+    frame = frame.dropna(subset=["yield_per_hectare_tonnes"])
     frame = frame[frame["yield_per_hectare_tonnes"].between(0.01, 80)]
     for column in CATEGORICAL_FEATURES:
         frame[column] = frame[column].astype(str).str.strip().str.lower()
     if frame.empty:
         raise ValueError("yield dataset is empty after cleaning")
     return frame[[*FEATURES, "yield_per_hectare_tonnes"]]
+
+
+def normalize_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    selected: dict[str, pd.Series] = {}
+    missing: list[str] = []
+    for canonical, aliases in COLUMN_ALIASES.items():
+        source = next((alias for alias in aliases if alias in frame.columns), None)
+        if source is None:
+            if canonical == "yield_per_hectare_tonnes":
+                continue
+            missing.append("/".join(aliases))
+            continue
+        selected[canonical] = frame[source]
+    if missing:
+        raise ValueError(f"yield dataset missing columns: {missing}")
+    return pd.DataFrame(selected).dropna()
 
 
 def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str, object]:

@@ -80,40 +80,61 @@ Open the dashboard at `http://localhost:3000`.
 Datasets are downloaded under `data/` and artifacts under service `models/` directories.
 Both locations are gitignored. Training scripts save metadata next to each artifact.
 
+### Kaggle tabular datasets
+
+If `KAGGLE_API_TOKEN` is present in your local `.env`, download the preferred Indian
+tabular datasets first:
+
+```bash
+set -a && source .env && set +a
+uvx --from kaggle kaggle datasets download \
+  atharvaingle/crop-recommendation-dataset \
+  -p data/kaggle/crop-recommendation --unzip -o -q
+uvx --from kaggle kaggle datasets download \
+  nikhilmahajan29/crop-production-statistics-india \
+  -p data/kaggle/crop-production-statistics-india --unzip -o -q
+uvx --from kaggle kaggle datasets download \
+  sanchitagholap/crop-and-fertilizer-dataset-for-westernmaharashtra \
+  -p data/kaggle/fertilizer-western-maharashtra --unzip -o -q
+```
+
+The training scripts default to these ignored Kaggle paths and keep the dataset source
+reference in model metadata.
+
 ### Crop recommendation
 
 ```bash
 uv run --project apps/ml-crop \
-  python apps/ml-crop/scripts/train_crop.py --download
+  python apps/ml-crop/scripts/train_crop.py
 ```
 
 Outputs:
 
-- `data/crop/Crop_recommendation.csv`
+- `data/kaggle/crop-recommendation/Crop_recommendation.csv`
 - `apps/ml-crop/models/crop_model.pkl`
 
 ### Yield prediction
 
 ```bash
 uv run --project apps/ml-crop \
-  python apps/ml-crop/scripts/train_yield.py --download
+  python apps/ml-crop/scripts/train_yield.py
 ```
 
 Outputs:
 
-- `data/yield/crop_production.csv`
+- `data/kaggle/crop-production-statistics-india/APY.csv`
 - `apps/ml-crop/models/yield_model.pkl`
 
 ### Fertilizer recommendation
 
 ```bash
 uv run --project apps/ml-crop \
-  python apps/ml-crop/scripts/train_fertilizer.py --download
+  python apps/ml-crop/scripts/train_fertilizer.py
 ```
 
 Outputs:
 
-- `data/fertilizer/fertilizer_recommendation.csv`
+- `data/kaggle/fertilizer-western-maharashtra/Crop and fertilizer dataset.csv`
 - `apps/ml-crop/models/fertilizer_model.pkl`
 
 ### Plant disease detection
@@ -139,6 +160,19 @@ uv run --project apps/ml-vision \
 
 Use Kaggle, Mendeley PlantVillage, TFDS PlantVillage, or an approved local field-image
 dataset. Do not commit image datasets or `.pth` files.
+
+With `KAGGLE_API_TOKEN`, the preferred local PlantVillage baseline is:
+
+```bash
+set -a && source .env && set +a
+uvx --from kaggle kaggle datasets download \
+  mustafaberatyavas/plantvillage-dataset \
+  -p data/kaggle/plantvillage-dataset --unzip -o -q
+uv run --project apps/ml-vision \
+  python apps/ml-vision/scripts/train_vision.py \
+  --dataset-dir data/kaggle/plantvillage-dataset/PlantVillage/raw \
+  --output apps/ml-vision/models/resnet34_plantvillage.pth
+```
 
 ## Verification commands
 

@@ -21,11 +21,12 @@ from sklearn.preprocessing import StandardScaler
 LOGGER = logging.getLogger("train-crop")
 RANDOM_STATE = 42
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATASET_URL = (
+DEFAULT_DATASET_SOURCE = "kaggle://atharvaingle/crop-recommendation-dataset/Crop_recommendation.csv"
+DEFAULT_DOWNLOAD_URL = (
     "https://raw.githubusercontent.com/vaishnavid0604/agriculture-portal/main/"
     "farmer/ML/crop_recommendation/Crop_recommendation.csv"
 )
-DEFAULT_DATASET_PATH = REPO_ROOT / "data/crop/Crop_recommendation.csv"
+DEFAULT_DATASET_PATH = REPO_ROOT / "data/kaggle/crop-recommendation/Crop_recommendation.csv"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "apps/ml-crop/models/crop_model.pkl"
 FEATURES = ["nitrogen", "phosphorus", "potassium", "temperature", "humidity", "ph", "rainfall"]
 SOURCE_COLUMNS = ["N", "P", "K", "temperature", "humidity", "ph", "rainfall"]
@@ -35,7 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument("--source-url", default=DEFAULT_DATASET_URL)
+    parser.add_argument("--source-url", default=DEFAULT_DATASET_SOURCE)
+    parser.add_argument("--download-url", default=DEFAULT_DOWNLOAD_URL)
     parser.add_argument("--download", action="store_true")
     return parser.parse_args()
 
@@ -43,7 +45,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = parse_args()
-    dataset_path = ensure_dataset(args.dataset, args.source_url, args.download)
+    dataset_path = ensure_dataset(args.dataset, args.download_url, args.download)
     frame = load_dataset(dataset_path)
     artifact = train(frame, dataset_path, args.source_url)
     args.output.parent.mkdir(parents=True, exist_ok=True)

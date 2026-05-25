@@ -39,14 +39,18 @@ apps/*/cmd/*/server
 apps/*/cmd/*/worker
 
 # Generated ML artifacts
+data/**
+!data/.gitkeep
 apps/ml-crop/models/*.pkl
 apps/ml-vision/models/*.pth
 apps/ml-vision/models/*.pt
 apps/ml-vision/models/*.onnx
+apps/ml-vision/models/*.metadata.json
 models/**/*.pkl
 models/**/*.pth
 models/**/*.pt
 models/**/*.onnx
+models/**/*.metadata.json
 
 # Editor/OS noise and logs
 .DS_Store

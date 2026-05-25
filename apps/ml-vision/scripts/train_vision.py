@@ -18,7 +18,9 @@ from torchvision import datasets, models, transforms
 from torchvision.models import ResNet34_Weights
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATASET_DIR = REPO_ROOT / "data" / "vision" / "plantvillage"
+DEFAULT_DATASET_DIR = (
+    REPO_ROOT / "data" / "kaggle" / "plantvillage-dataset" / "PlantVillage" / "raw"
+)
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "apps" / "ml-vision" / "models" / "resnet34_plantvillage.pth"
 RANDOM_SEED = 42
 IMAGE_SIZE = 224

@@ -22,3 +22,18 @@ def test_train_yield_emits_metadata(tmp_path: Path) -> None:
     assert metadata["target"] == "yield_per_hectare_tonnes"
     assert "dataset_sha256" in metadata
     assert artifact["model"] is not None
+
+
+def test_load_yield_accepts_kaggle_apy_schema(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "APY.csv"
+    rows = ["State,District ,Crop,Crop_Year,Season,Area ,Production,Yield"]
+    rows.append("Punjab,Ludhiana,Rice,2020,Kharif,100,300,3.0")
+    rows.append("Punjab,Ludhiana,Wheat,2020,Rabi,120,240,2.0")
+    dataset_path.write_text("\n".join(rows), encoding="utf-8")
+
+    frame = load_dataset(dataset_path)
+
+    assert frame.columns.tolist() == [*FEATURES, "yield_per_hectare_tonnes"]
+    assert frame["state"].tolist() == ["punjab", "punjab"]
+    assert frame["district"].tolist() == ["ludhiana", "ludhiana"]
+    assert frame["yield_per_hectare_tonnes"].tolist() == [3.0, 2.0]
