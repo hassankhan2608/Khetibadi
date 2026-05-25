@@ -12,12 +12,15 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
+import torch
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
+from torch import nn
+from torchvision import models, transforms
 
 from app.config import Settings, get_settings
 from app.logging_config import configure_logging
@@ -27,6 +30,7 @@ REPLAY_WINDOW_SECONDS = 300
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MIN_IMAGE_SIDE = 64
 JOB_TTL_SECONDS = 3600
+IMAGE_SIZE = 224
 
 logger = logging.getLogger(SERVICE_NAME)
 
@@ -50,9 +54,17 @@ class DiseaseDetection(BaseModel):
     background_removed: bool
     fallback_resize: bool
     annotated_image_base64: str
-    model_mode: Literal["stub"]
+    model_mode: Literal["model", "stub"]
     warning: str | None
     metadata: ImageMetadata
+
+
+class VisionArtifact(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+
+    model: Any
+    classes: list[str]
+    metadata: dict[str, Any]
 
 
 class DetectionJob(BaseModel):
@@ -68,6 +80,7 @@ class DetectionJob(BaseModel):
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings: Settings = get_settings()
     configure_logging(settings.log_level)
+    load_artifact(settings)
     logger.info(
         "service starting",
         extra={"service": SERVICE_NAME, "env": settings.app_env, "port": settings.port},
@@ -80,6 +93,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="khetibadi-ml-vision", lifespan=lifespan)
 jobs: dict[str, DetectionJob] = {}
+vision_artifact: VisionArtifact | None = None
 
 
 def require_hmac_user(
@@ -133,13 +147,20 @@ AuthDependency = Annotated[AuthUser, Depends(require_hmac_user)]
 async def health() -> dict[str, object]:
     settings = get_settings()
     artifact_present = Path(settings.vision_model_path).exists()
-    mode = "stub" if settings.ml_allow_stub_mode and not artifact_present else "model"
+    loaded = vision_artifact is not None
+    mode = "model" if loaded else "stub"
+    if loaded and vision_artifact is not None:
+        classes = vision_artifact.classes
+    else:
+        classes = supported_classes()
     return {
-        "status": "ok" if artifact_present or settings.ml_allow_stub_mode else "degraded",
+        "status": "ok" if loaded or settings.ml_allow_stub_mode else "degraded",
         "service": SERVICE_NAME,
         "model_mode": mode,
         "model_artifact_present": artifact_present,
-        "cuda_available": False,
+        "model_loaded": loaded,
+        "classes": classes,
+        "cuda_available": torch.cuda.is_available(),
     }
 
 
@@ -182,6 +203,8 @@ async def get_detection_job_alias(job_id: str, user: AuthDependency) -> Detectio
 
 @app.get("/ml/vision/classes")
 async def disease_classes(_: AuthDependency) -> dict[str, list[str]]:
+    if vision_artifact is not None:
+        return {"classes": vision_artifact.classes}
     return {"classes": supported_classes()}
 
 
@@ -197,6 +220,53 @@ async def create_detection_job(image: UploadFile) -> dict[str, str]:
         result=build_detection(image, image_bytes),
     )
     return {"job_id": job_id, "status": "completed"}
+
+
+def load_artifact(settings: Settings) -> None:
+    global vision_artifact
+    path = Path(settings.vision_model_path)
+    if path.exists():
+        vision_artifact = load_vision_artifact(path)
+        logger.info(
+            "vision model artifact loaded",
+            extra={"path": str(path), "classes": len(vision_artifact.classes)},
+        )
+        return
+    vision_artifact = None
+    if settings.ml_allow_stub_mode:
+        logger.warning("vision model artifact missing; explicit stub mode enabled")
+        return
+    msg = f"vision model artifact is not available: {path}"
+    raise RuntimeError(msg)
+
+
+def load_vision_artifact(path: Path) -> VisionArtifact:
+    checkpoint = cast(dict[str, Any], torch.load(path, map_location="cpu", weights_only=False))
+    state_dict = checkpoint.get("state_dict")
+    classes = checkpoint.get("classes")
+    metadata = checkpoint.get("metadata")
+    if (
+        not isinstance(state_dict, dict)
+        or not isinstance(classes, list)
+        or not isinstance(metadata, dict)
+    ):
+        msg = "vision checkpoint must contain state_dict, classes, and metadata"
+        raise ValueError(msg)
+    class_names = [str(item) for item in classes]
+    if len(class_names) < 2:
+        msg = "vision checkpoint must contain at least two classes"
+        raise ValueError(msg)
+    model = create_resnet34(len(class_names))
+    model.load_state_dict(state_dict)
+    model.eval()
+    return VisionArtifact(model=model, classes=class_names, metadata=metadata)
+
+
+def create_resnet34(num_classes: int) -> nn.Module:
+    model = cast(nn.Module, models.resnet34(weights=None))
+    classifier = cast(nn.Linear, model.fc)
+    model.fc = nn.Linear(classifier.in_features, num_classes)
+    return model
 
 
 async def read_image(image: UploadFile) -> bytes:
@@ -215,8 +285,11 @@ async def read_image(image: UploadFile) -> bytes:
 
 
 def build_detection(image: UploadFile, image_bytes: bytes) -> DiseaseDetection:
-    ensure_stub_available()
+    artifact = vision_artifact
     metadata = inspect_image(image, image_bytes)
+    if artifact is not None:
+        return predict_detection(image_bytes, metadata, artifact)
+    ensure_stub_available()
     digest = hashlib.sha256(image_bytes).hexdigest()
     classes = supported_classes()
     disease = classes[int(digest[:8], 16) % len(classes)]
@@ -263,6 +336,55 @@ def inspect_image(image: UploadFile, image_bytes: bytes) -> ImageMetadata:
         height=height,
         size_bytes=len(image_bytes),
     )
+
+
+def predict_detection(
+    image_bytes: bytes,
+    metadata: ImageMetadata,
+    artifact: VisionArtifact,
+) -> DiseaseDetection:
+    tensor = preprocess_image(image_bytes)
+    model = cast(nn.Module, artifact.model)
+    with torch.no_grad():
+        logits = model(tensor.unsqueeze(0))
+        scores = torch.softmax(logits.squeeze(0), dim=0)
+    class_id = int(scores.argmax().item())
+    confidence = float(scores[class_id].item())
+    settings = get_settings()
+    disease = artifact.classes[class_id]
+    if confidence < settings.confidence_threshold:
+        disease = "uncertain"
+        is_healthy = False
+    else:
+        is_healthy = "healthy" in disease.lower()
+    return DiseaseDetection(
+        disease=disease,
+        confidence=round(confidence, 4),
+        is_healthy=is_healthy,
+        background_removed=False,
+        fallback_resize=metadata.width < IMAGE_SIZE or metadata.height < IMAGE_SIZE,
+        annotated_image_base64=encode_image(image_bytes),
+        model_mode="model",
+        warning=None,
+        metadata=metadata,
+    )
+
+
+def preprocess_image(image_bytes: bytes) -> torch.Tensor:
+    with Image.open(BytesIO(image_bytes)) as opened:
+        image = opened.convert("RGB")
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(IMAGE_SIZE),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ]
+    )
+    return cast(torch.Tensor, transform(image))
 
 
 def ensure_stub_available() -> None:

@@ -76,6 +76,12 @@ python_version = "3.12"
 strict = true
 ignore_missing_imports = false
 
+[[tool.mypy.overrides]]
+module = [
+  "torchvision.*",
+]
+ignore_missing_imports = true
+
 # ── Pytest ───────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

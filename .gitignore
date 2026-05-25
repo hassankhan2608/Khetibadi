@@ -38,12 +38,14 @@ apps/ml-crop/models/*.pkl
 apps/ml-vision/models/*.pth
 apps/ml-vision/models/*.pt
 apps/ml-vision/models/*.onnx
+apps/ml-vision/models/*.metadata.json
 data/**
 !data/.gitkeep
 models/**/*.pkl
 models/**/*.pth
 models/**/*.pt
 models/**/*.onnx
+models/**/*.metadata.json
 
 # ─── Node / Bun ───────────────────────────────────────────────────────────────
 node_modules/
