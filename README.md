@@ -56,13 +56,13 @@ Important keys:
 | `OPENWEATHER_API_KEY` / `OPENWEATHERMAP_API_KEY` | Farm weather lookup by centroid. |
 | `DATA_GOV_IN_API_KEY` | data.gov.in / AGMARKNET market price fetch. |
 | `MARKET_DATA_API_URL` | data.gov.in resource URL, default resource `9ef84268-d588-465a-a308-a864a43d0070`. |
-| `GROQ_API_KEY` | Required for real AI chat generation later. |
+| `GROQ_API_KEY` | Required for real Groq-backed AI chat streaming. |
 | `VITE_API_BASE_URL` | Browser API origin. Keep this as the only public API URL. |
 
-Local fallback flags are present for development:
+Local fallback flags are present for development but default to `false`:
 
 - `ML_ALLOW_STUB_MODE=true` lets ML services start if artifacts are missing.
-- `AI_CHAT_ALLOW_FAKE_LLM=true` lets chat stream a deterministic local response.
+- `AI_CHAT_ALLOW_FAKE_LLM=true` lets chat stream a deterministic local response when no Groq key is configured.
 
 Turn these off for no-mock validation once all artifacts and API keys are available.
 

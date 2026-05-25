@@ -13,8 +13,8 @@ from urllib.request import urlretrieve
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report
+from sklearn.model_selection import cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -30,6 +30,8 @@ DEFAULT_DATASET_PATH = REPO_ROOT / "data/kaggle/crop-recommendation/Crop_recomme
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "apps/ml-crop/models/crop_model.pkl"
 FEATURES = ["nitrogen", "phosphorus", "potassium", "temperature", "humidity", "ph", "rainfall"]
 SOURCE_COLUMNS = ["N", "P", "K", "temperature", "humidity", "ph", "rainfall"]
+OVERFIT_ACCURACY_GAP = 0.08
+UNDERFIT_ACCURACY = 0.75
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,9 +103,37 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         ],
     )
     model.fit(x_train, y_train)
+    train_predictions = model.predict(x_train)
     predictions = model.predict(x_test)
+    train_accuracy = float(accuracy_score(y_train, train_predictions))
+    train_balanced_accuracy = float(balanced_accuracy_score(y_train, train_predictions))
     accuracy = float(accuracy_score(y_test, predictions))
-    cv_accuracy = float(cross_val_score(model, x_train, y_train, cv=5, n_jobs=-1).mean())
+    balanced_accuracy = float(balanced_accuracy_score(y_test, predictions))
+    cv_results = cross_validate(
+        model,
+        x_train,
+        y_train,
+        cv=5,
+        n_jobs=-1,
+        scoring=["accuracy", "balanced_accuracy"],
+        return_train_score=True,
+    )
+    cv_accuracy = float(cv_results["test_accuracy"].mean())
+    cv_accuracy_std = float(cv_results["test_accuracy"].std())
+    cv_balanced_accuracy = float(cv_results["test_balanced_accuracy"].mean())
+    cv_train_accuracy = float(cv_results["train_accuracy"].mean())
+    train_validation_gap = train_accuracy - accuracy
+    cv_train_validation_gap = cv_train_accuracy - cv_accuracy
+    diagnostics = {
+        "overfit_warning": train_validation_gap > OVERFIT_ACCURACY_GAP
+        or cv_train_validation_gap > OVERFIT_ACCURACY_GAP,
+        "underfit_warning": accuracy < UNDERFIT_ACCURACY or cv_accuracy < UNDERFIT_ACCURACY,
+        "train_validation_accuracy_gap": train_validation_gap,
+        "cv_train_validation_accuracy_gap": cv_train_validation_gap,
+        "decision": "ok"
+        if accuracy >= UNDERFIT_ACCURACY and train_validation_gap <= OVERFIT_ACCURACY_GAP
+        else "review",
+    }
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     classifier = model.named_steps["classifier"]
     feature_importance = {
@@ -120,12 +150,29 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         "classes": sorted(y.unique().tolist()),
         "model_type": "sklearn.pipeline.Pipeline(StandardScaler, RandomForestClassifier)",
         "random_state": RANDOM_STATE,
+        "train_accuracy": train_accuracy,
+        "train_balanced_accuracy": train_balanced_accuracy,
         "test_accuracy": accuracy,
+        "test_balanced_accuracy": balanced_accuracy,
         "cv_accuracy": cv_accuracy,
+        "cv_accuracy_std": cv_accuracy_std,
+        "cv_balanced_accuracy": cv_balanced_accuracy,
+        "cv_train_accuracy": cv_train_accuracy,
+        "diagnostics": diagnostics,
         "classification_report": report,
         "feature_importance": feature_importance,
     }
-    LOGGER.info("crop model metrics: %s", json.dumps({"accuracy": accuracy, "cv": cv_accuracy}))
+    LOGGER.info(
+        "crop model metrics: %s",
+        json.dumps(
+            {
+                "train_accuracy": train_accuracy,
+                "test_accuracy": accuracy,
+                "cv_accuracy": cv_accuracy,
+                "diagnostics": diagnostics,
+            },
+        ),
+    )
     return {"model": model, "metadata": metadata}
 
 

@@ -43,6 +43,10 @@ def test_train_fertilizer_emits_metadata(tmp_path: Path) -> None:
     assert metadata["dataset_rows"] == 36
     assert metadata["random_state"] == 42
     assert set(metadata["classes"]) == {"DAP", "MOP", "Urea"}
+    assert metadata["train_accuracy"] >= metadata["test_accuracy"]
+    assert metadata["test_balanced_accuracy"] >= 0.9
+    assert metadata["imputed_features"]["humidity"] == DEFAULT_HUMIDITY
+    assert metadata["diagnostics"]["decision"] in {"ok", "review"}
     assert "dataset_sha256" in metadata
     assert artifact["model"] is not None
 

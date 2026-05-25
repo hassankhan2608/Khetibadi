@@ -13,7 +13,7 @@ export interface DiseaseDetectionResult {
   background_removed: boolean;
   fallback_resize: boolean;
   annotated_image_base64: string;
-  model_mode: "stub";
+  model_mode: "model" | "stub";
   warning?: string;
   metadata: ImageMetadata;
 }

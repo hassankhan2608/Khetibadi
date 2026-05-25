@@ -15,7 +15,7 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.model_selection import cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -42,6 +42,8 @@ COLUMN_ALIASES = {
     "production_tonnes": ["Production"],
     "yield_per_hectare_tonnes": ["Yield"],
 }
+OVERFIT_R2_GAP = 0.15
+UNDERFIT_R2 = 0.45
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,10 +140,38 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         ],
     )
     model.fit(x_train, y_train)
+    train_predictions = model.predict(x_train)
     predictions = model.predict(x_test)
+    train_r2 = float(r2_score(y_train, train_predictions))
+    train_mae = float(mean_absolute_error(y_train, train_predictions))
     r2 = float(r2_score(y_test, predictions))
     mae = float(mean_absolute_error(y_test, predictions))
-    cv_r2 = float(cross_val_score(model, x_train, y_train, cv=5, n_jobs=-1, scoring="r2").mean())
+    cv_results = cross_validate(
+        model,
+        x_train,
+        y_train,
+        cv=5,
+        n_jobs=-1,
+        scoring={"r2": "r2", "neg_mae": "neg_mean_absolute_error"},
+        return_train_score=True,
+    )
+    cv_r2 = float(cv_results["test_r2"].mean())
+    cv_r2_std = float(cv_results["test_r2"].std())
+    cv_train_r2 = float(cv_results["train_r2"].mean())
+    cv_mae = float(-cv_results["test_neg_mae"].mean())
+    cv_train_mae = float(-cv_results["train_neg_mae"].mean())
+    train_validation_r2_gap = train_r2 - r2
+    cv_train_validation_r2_gap = cv_train_r2 - cv_r2
+    diagnostics = {
+        "overfit_warning": train_validation_r2_gap > OVERFIT_R2_GAP
+        or cv_train_validation_r2_gap > OVERFIT_R2_GAP,
+        "underfit_warning": r2 < UNDERFIT_R2 or cv_r2 < UNDERFIT_R2,
+        "train_validation_r2_gap": train_validation_r2_gap,
+        "cv_train_validation_r2_gap": cv_train_validation_r2_gap,
+        "decision": "ok"
+        if r2 >= UNDERFIT_R2 and train_validation_r2_gap <= OVERFIT_R2_GAP
+        else "review",
+    }
     metadata = {
         "trained_at": datetime.now(UTC).isoformat(),
         "dataset_path": str(dataset_path),
@@ -154,11 +184,29 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         "target": "yield_per_hectare_tonnes",
         "model_type": "sklearn.pipeline.Pipeline(ColumnTransformer, GradientBoostingRegressor)",
         "random_state": RANDOM_STATE,
+        "train_r2": train_r2,
+        "train_mae": train_mae,
         "test_r2": r2,
         "test_mae": mae,
         "cv_r2": cv_r2,
+        "cv_r2_std": cv_r2_std,
+        "cv_train_r2": cv_train_r2,
+        "cv_mae": cv_mae,
+        "cv_train_mae": cv_train_mae,
+        "diagnostics": diagnostics,
     }
-    LOGGER.info("yield model metrics: %s", json.dumps({"r2": r2, "mae": mae, "cv_r2": cv_r2}))
+    LOGGER.info(
+        "yield model metrics: %s",
+        json.dumps(
+            {
+                "train_r2": train_r2,
+                "test_r2": r2,
+                "test_mae": mae,
+                "cv_r2": cv_r2,
+                "diagnostics": diagnostics,
+            },
+        ),
+    )
     return {"model": model, "metadata": metadata}
 
 

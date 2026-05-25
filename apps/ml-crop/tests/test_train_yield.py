@@ -20,6 +20,10 @@ def test_train_yield_emits_metadata(tmp_path: Path) -> None:
     assert metadata["dataset_rows"] == 60
     assert metadata["random_state"] == 42
     assert metadata["target"] == "yield_per_hectare_tonnes"
+    assert "train_r2" in metadata
+    assert "cv_train_r2" in metadata
+    assert "cv_mae" in metadata
+    assert metadata["diagnostics"]["decision"] in {"ok", "review"}
     assert "dataset_sha256" in metadata
     assert artifact["model"] is not None
 

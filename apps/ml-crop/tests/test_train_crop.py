@@ -20,5 +20,9 @@ def test_train_crop_emits_metadata(tmp_path: Path) -> None:
     assert metadata["dataset_rows"] == 20
     assert metadata["random_state"] == 42
     assert set(metadata["classes"]) == {"rice", "wheat"}
+    assert metadata["train_accuracy"] >= metadata["test_accuracy"]
+    assert metadata["test_balanced_accuracy"] >= 0.9
+    assert metadata["diagnostics"]["underfit_warning"] is False
+    assert metadata["diagnostics"]["decision"] in {"ok", "review"}
     assert "dataset_sha256" in metadata
     assert artifact["model"] is not None

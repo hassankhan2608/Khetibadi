@@ -77,6 +77,21 @@ const cropDefaults: CropRecommendationRequest = {
   state: "punjab",
 };
 
+const cropOptions = ["rice", "wheat", "maize", "cotton", "sugarcane", "millet", "pulses"] as const;
+const soilOptions = ["loamy", "clay", "sandy", "silty", "black", "red"] as const;
+const seasonOptions = ["kharif", "rabi", "zaid", "whole year", "summer", "winter"] as const;
+const stateOptions = [
+  "punjab",
+  "haryana",
+  "uttar pradesh",
+  "maharashtra",
+  "karnataka",
+  "west bengal",
+  "keralam",
+] as const;
+const districtOptions = ["ludhiana", "pune", "kolhapur", "kozikhode", "burdwan", "davangere"] as const;
+const directionOptions: readonly PriceAlertDirection[] = ["above", "below"];
+
 export function DashboardHomePage() {
   const user = useAuthUser();
   const farms = useQuery({ queryKey: farmKeys.list(), queryFn: farmApi.list, staleTime: 10 * 60 * 1000 });
@@ -133,7 +148,7 @@ export function DashboardHomePage() {
 export function FarmMapPage() {
   const farms = useQuery({ queryKey: farmKeys.list(), queryFn: farmApi.list, staleTime: 10 * 60 * 1000 });
   const [form, setForm] = useState<FarmCreateRequest>({
-    name: "Demo Farm",
+    name: "",
     crop: "wheat",
     soil_type: "loamy",
     area_hectares: 2.5,
@@ -160,9 +175,9 @@ export function FarmMapPage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>
-            <TextField label="Name" value={form.name} onChange={(value) => { setForm({ ...form, name: value }); }} />
-            <TextField label="Crop" value={form.crop} onChange={(value) => { setForm({ ...form, crop: value }); }} />
-            <TextField label="Soil type" value={form.soil_type} onChange={(value) => { setForm({ ...form, soil_type: value }); }} />
+            <TextField label="Name" placeholder="North field" value={form.name} onChange={(value) => { setForm({ ...form, name: value }); }} />
+            <SelectField label="Crop" options={cropOptions} value={form.crop} onChange={(value) => { setForm({ ...form, crop: value }); }} />
+            <SelectField label="Soil type" options={soilOptions} value={form.soil_type} onChange={(value) => { setForm({ ...form, soil_type: value }); }} />
             <NumberField label="Area hectares" value={form.area_hectares} onChange={(value) => { setForm({ ...form, area_hectares: value }); }} />
             {createFarm.error ? <p className="text-sm font-semibold text-[#8a2f22]">Unable to create farm.</p> : null}
             <Button loading={createFarm.isPending} type="submit">Create farm</Button>
@@ -199,6 +214,9 @@ export function FarmMapPage() {
 export function CropAdvisorPage() {
   const [features, setFeatures] = useState<CropRecommendationRequest>(cropDefaults);
   const [crop, setCrop] = useState<string>("wheat");
+  const [soilType, setSoilType] = useState<string>("loamy");
+  const [areaHectares, setAreaHectares] = useState<number>(2.5);
+  const [district, setDistrict] = useState<string>("ludhiana");
   const recommend = useMutation({ mutationFn: mlApi.recommend });
   const yieldPredict = useMutation({ mutationFn: mlApi.yield });
   const fertilizer = useMutation({ mutationFn: mlApi.fertilizer });
@@ -206,9 +224,9 @@ export function CropAdvisorPage() {
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     recommend.mutate(features);
-    const yieldRequest: YieldPredictionRequest = { ...features, crop, area_hectares: 2.5 };
+    const yieldRequest: YieldPredictionRequest = { ...features, crop, area_hectares: areaHectares, district };
     yieldPredict.mutate(yieldRequest);
-    const fertilizerRequest: FertilizerRecommendationRequest = { ...features, crop, soil_type: "loamy" };
+    const fertilizerRequest: FertilizerRecommendationRequest = { ...features, crop, soil_type: soilType };
     fertilizer.mutate(fertilizerRequest);
   }
 
@@ -221,7 +239,10 @@ export function CropAdvisorPage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>
-            <TextField label="Crop for yield/fertilizer" value={crop} onChange={setCrop} />
+            <SelectField label="Crop for yield/fertilizer" options={cropOptions} value={crop} onChange={setCrop} />
+            <SelectField label="Soil type" options={soilOptions} value={soilType} onChange={setSoilType} />
+            <NumberField label="Area hectares" value={areaHectares} onChange={setAreaHectares} />
+            <SelectField label="District" options={districtOptions} value={district} onChange={setDistrict} />
             <FeatureFields value={features} onChange={setFeatures} />
             <Button loading={recommend.isPending || yieldPredict.isPending || fertilizer.isPending} type="submit">Run advisory</Button>
           </form>
@@ -271,7 +292,7 @@ export function DiseaseScanPage() {
       </Card>
       <ResultCard
         title="Detection result"
-        body={detect.isPending ? "Scanning the uploaded leaf image…" : detect.data ? `${detect.data.disease} · ${Math.round(detect.data.confidence * 100)}% confidence · ${detect.data.model_mode}` : "Upload an image to run the local stub model."}
+        body={detect.isPending ? "Scanning the uploaded leaf image…" : detect.data ? `${detect.data.disease} · ${Math.round(detect.data.confidence * 100)}% confidence · ${detect.data.model_mode}` : "Upload a clear crop-leaf image for disease detection."}
       />
     </section>
   );
@@ -281,6 +302,10 @@ export function MarketPricesPage() {
   const prices = useQuery({ queryKey: marketKeys.prices(), queryFn: marketApi.prices, staleTime: 5 * 60 * 1000 });
   const alerts = useQuery({ queryKey: marketKeys.alerts(), queryFn: marketApi.alerts });
   const [alert, setAlert] = useState({ commodity: "wheat", state: "punjab", market: "ludhiana", direction: "above" as PriceAlertDirection, target_price: 2500 });
+  const priceRows = prices.data ?? [];
+  const commodityOptions = uniqueMarketOptions(priceRows, "commodity", ["wheat", "rice", "maize", "mustard"]);
+  const alertStateOptions = uniqueMarketOptions(priceRows, "state", stateOptions);
+  const marketOptions = uniqueMarketOptions(priceRows, "market", ["ludhiana", "mukkom market", "burdwan"]);
   const createAlert = useMutation({
     mutationFn: marketApi.createAlert,
     onSuccess: async () => queryClient.invalidateQueries({ queryKey: marketKeys.alerts() }),
@@ -297,16 +322,17 @@ export function MarketPricesPage() {
         <Card>
           <CardHeader><p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">Mandi watch</p><CardTitle>Market prices</CardTitle></CardHeader>
           <CardContent>
-            {prices.error ? <ErrorState title="Prices unavailable" message="Market service did not return prices." /> : <PriceTable prices={prices.data ?? []} />}
+            {prices.error ? <ErrorState title="Prices unavailable" message="Market service did not return prices." /> : <PriceTable prices={priceRows} />}
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>Create alert</CardTitle></CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={submit}>
-              <TextField label="Commodity" value={alert.commodity} onChange={(commodity) => { setAlert({ ...alert, commodity }); }} />
-              <TextField label="State" value={alert.state} onChange={(state) => { setAlert({ ...alert, state }); }} />
-              <TextField label="Market" value={alert.market} onChange={(market) => { setAlert({ ...alert, market }); }} />
+              <SelectField label="Commodity" options={commodityOptions} value={alert.commodity} onChange={(commodity) => { setAlert({ ...alert, commodity }); }} />
+              <SelectField label="State" options={alertStateOptions} value={alert.state} onChange={(state) => { setAlert({ ...alert, state }); }} />
+              <SelectField label="Market" options={marketOptions} value={alert.market} onChange={(market) => { setAlert({ ...alert, market }); }} />
+              <SelectField label="Direction" options={directionOptions} value={alert.direction} onChange={(direction) => { setAlert({ ...alert, direction: direction as PriceAlertDirection }); }} />
               <NumberField label="Target price" value={alert.target_price} onChange={(targetPrice) => { setAlert({ ...alert, target_price: targetPrice }); }} />
               <Button loading={createAlert.isPending} type="submit">Save alert</Button>
             </form>
@@ -328,7 +354,7 @@ export function MarketPricesPage() {
 export function AIAssistantPage() {
   const sessions = useQuery({ queryKey: chatKeys.sessions(), queryFn: chatApi.sessions });
   const [activeSession, setActiveSession] = useState<string | null>(null);
-  const [message, setMessage] = useState("What should I do for wheat crop this week?");
+  const [message, setMessage] = useState("");
   const createSession = useMutation({
     mutationFn: chatApi.createSession,
     onSuccess: async (session) => {
@@ -416,8 +442,8 @@ export function AIAssistantPage() {
             {streamError !== "" ? <p className="rounded-2xl bg-[#f5d7ce] p-3 text-sm font-semibold text-[#8a2f22]">{streamError}</p> : null}
           </div>
           <form className="space-y-3" onSubmit={(event) => { void submit(event); }}>
-            <Textarea value={message} onChange={(event) => { setMessage(event.target.value); }} />
-            <Button loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
+            <Textarea placeholder="Ask about irrigation, pests, crop planning, or mandi decisions." value={message} onChange={(event) => { setMessage(event.target.value); }} />
+            <Button disabled={message.trim() === "" || isStreaming} loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
           </form>
         </CardContent>
       </Card>
@@ -527,12 +553,23 @@ function ResultCard({ body, title }: { body: string; title: string }) {
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><p className="text-[#5f4a33]">{body}</p></CardContent></Card>;
 }
 
-function TextField({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
-  return <div className="space-y-2"><Label>{label}</Label><Input value={value} onChange={(event) => { onChange(event.target.value); }} required /></div>;
+function TextField({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder?: string; value: string }) {
+  return <div className="space-y-2"><Label>{label}</Label><Input placeholder={placeholder} value={value} onChange={(event) => { onChange(event.target.value); }} required /></div>;
 }
 
 function NumberField({ label, onChange, value }: { label: string; onChange: (value: number) => void; value: number }) {
   return <div className="space-y-2"><Label>{label}</Label><Input type="number" value={value} onChange={(event) => { onChange(Number(event.target.value)); }} required /></div>;
+}
+
+function SelectField({ label, onChange, options, value }: { label: string; onChange: (value: string) => void; options: readonly string[]; value: string }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <select className="w-full rounded-[1rem] border border-[#d8c4a5] bg-[#fffaf0] px-4 py-3 text-sm font-semibold text-[#3f2f1f] shadow-inner outline-none transition focus:border-[#2f5d3a] focus:ring-2 focus:ring-[#b87924]/25" required value={value} onChange={(event) => { onChange(event.target.value); }}>
+        {options.map((option) => <option key={option} value={option}>{toTitleCase(option)}</option>)}
+      </select>
+    </div>
+  );
 }
 
 function FeatureFields({ onChange, value }: { onChange: (value: CropRecommendationRequest) => void; value: CropRecommendationRequest }) {
@@ -541,10 +578,19 @@ function FeatureFields({ onChange, value }: { onChange: (value: CropRecommendati
       {(["nitrogen", "phosphorus", "potassium", "temperature", "humidity", "ph", "rainfall"] as const).map((key) => (
         <NumberField key={key} label={key} value={value[key]} onChange={(next) => { onChange({ ...value, [key]: next }); }} />
       ))}
-      <TextField label="Season" value={value.season} onChange={(season) => { onChange({ ...value, season }); }} />
-      <TextField label="State" value={value.state} onChange={(state) => { onChange({ ...value, state }); }} />
+      <SelectField label="Season" options={seasonOptions} value={value.season} onChange={(season) => { onChange({ ...value, season }); }} />
+      <SelectField label="State" options={stateOptions} value={value.state} onChange={(state) => { onChange({ ...value, state }); }} />
     </div>
   );
+}
+
+function uniqueMarketOptions(prices: MarketPrice[], key: "commodity" | "market" | "state", fallback: readonly string[]): string[] {
+  const values = prices.map((price) => price[key].trim().toLowerCase()).filter((value) => value !== "");
+  return Array.from(new Set([...values, ...fallback])).slice(0, 25);
+}
+
+function toTitleCase(value: string): string {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function PriceTable({ prices }: { prices: MarketPrice[] }) {

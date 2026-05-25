@@ -14,8 +14,8 @@ import joblib
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report
+from sklearn.model_selection import cross_validate, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -72,6 +72,8 @@ KAGGLE_COLUMNS = [
 ]
 DEFAULT_HUMIDITY = 50.0
 DEFAULT_MOISTURE = 30.0
+OVERFIT_ACCURACY_GAP = 0.10
+UNDERFIT_ACCURACY = 0.70
 
 
 def parse_args() -> argparse.Namespace:
@@ -200,9 +202,44 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         ],
     )
     model.fit(x_train, y_train)
+    train_predictions = model.predict(x_train)
     predictions = model.predict(x_test)
+    train_accuracy = float(accuracy_score(y_train, train_predictions))
+    train_balanced_accuracy = float(balanced_accuracy_score(y_train, train_predictions))
     accuracy = float(accuracy_score(y_test, predictions))
-    cv_accuracy = float(cross_val_score(model, x_train, y_train, cv=5, n_jobs=-1).mean())
+    balanced_accuracy = float(balanced_accuracy_score(y_test, predictions))
+    cv_folds = min(5, int(y_train.value_counts().min()))
+    if cv_folds < 2:
+        cv_accuracy = accuracy
+        cv_accuracy_std = 0.0
+        cv_balanced_accuracy = balanced_accuracy
+        cv_train_accuracy = train_accuracy
+    else:
+        cv_results = cross_validate(
+            model,
+            x_train,
+            y_train,
+            cv=cv_folds,
+            n_jobs=-1,
+            scoring=["accuracy", "balanced_accuracy"],
+            return_train_score=True,
+        )
+        cv_accuracy = float(cv_results["test_accuracy"].mean())
+        cv_accuracy_std = float(cv_results["test_accuracy"].std())
+        cv_balanced_accuracy = float(cv_results["test_balanced_accuracy"].mean())
+        cv_train_accuracy = float(cv_results["train_accuracy"].mean())
+    train_validation_gap = train_accuracy - accuracy
+    cv_train_validation_gap = cv_train_accuracy - cv_accuracy
+    diagnostics = {
+        "overfit_warning": train_validation_gap > OVERFIT_ACCURACY_GAP
+        or cv_train_validation_gap > OVERFIT_ACCURACY_GAP,
+        "underfit_warning": accuracy < UNDERFIT_ACCURACY or cv_accuracy < UNDERFIT_ACCURACY,
+        "train_validation_accuracy_gap": train_validation_gap,
+        "cv_train_validation_accuracy_gap": cv_train_validation_gap,
+        "decision": "ok"
+        if accuracy >= UNDERFIT_ACCURACY and train_validation_gap <= OVERFIT_ACCURACY_GAP
+        else "review",
+    }
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     metadata = {
         "trained_at": datetime.now(UTC).isoformat(),
@@ -216,13 +253,32 @@ def train(frame: pd.DataFrame, dataset_path: Path, source_url: str) -> dict[str,
         "classes": sorted(y.unique().tolist()),
         "model_type": "sklearn.pipeline.Pipeline(ColumnTransformer, RandomForestClassifier)",
         "random_state": RANDOM_STATE,
+        "train_accuracy": train_accuracy,
+        "train_balanced_accuracy": train_balanced_accuracy,
         "test_accuracy": accuracy,
+        "test_balanced_accuracy": balanced_accuracy,
         "cv_accuracy": cv_accuracy,
+        "cv_accuracy_std": cv_accuracy_std,
+        "cv_balanced_accuracy": cv_balanced_accuracy,
+        "cv_train_accuracy": cv_train_accuracy,
+        "cv_folds": cv_folds,
+        "imputed_features": {
+            "humidity": DEFAULT_HUMIDITY,
+            "moisture": DEFAULT_MOISTURE,
+        },
+        "diagnostics": diagnostics,
         "classification_report": report,
     }
     LOGGER.info(
         "fertilizer model metrics: %s",
-        json.dumps({"accuracy": accuracy, "cv": cv_accuracy}),
+        json.dumps(
+            {
+                "train_accuracy": train_accuracy,
+                "test_accuracy": accuracy,
+                "cv_accuracy": cv_accuracy,
+                "diagnostics": diagnostics,
+            },
+        ),
     )
     return {"model": model, "metadata": metadata}
 
