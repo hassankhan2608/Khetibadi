@@ -9,11 +9,13 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -243,10 +245,31 @@ async def stream_response(
     if settings.groq_api_key == "" and not settings.ai_chat_allow_fake_llm:
         yield sse_event("error", {"error": "llm_unavailable"})
         return
-    response_text = build_stub_response(req.message, req.language)
-    tokens = response_text.split()
-    for index, token in enumerate(tokens):
-        yield sse_event("token", {"token": f"{token} ", "index": index})
+    token_count = 0
+    response_parts: list[str] = []
+    try:
+        async for token in generate_assistant_tokens(settings, req):
+            response_parts.append(token)
+            yield sse_event("token", {"token": token, "index": token_count})
+            token_count += 1
+    except Exception as exc:
+        partial = "".join(response_parts).strip()
+        if partial != "":
+            assistant = ChatMessage(
+                id=str(uuid4()),
+                session_id=session.id,
+                user_id=user_id,
+                role="assistant",
+                content=partial,
+                status="incomplete",
+                created_at=datetime.now(UTC),
+            )
+            messages.setdefault(session.id, []).append(assistant)
+            session.updated_at = assistant.created_at
+        logger.warning("chat stream failed", error=str(exc), session_id=session.id)
+        yield sse_event("error", {"error": "llm_stream_failed"})
+        return
+    response_text = "".join(response_parts).strip()
     assistant = ChatMessage(
         id=str(uuid4()),
         session_id=session.id,
@@ -262,8 +285,54 @@ async def stream_response(
         {
             "message_id": assistant.id,
             "session_id": session.id,
-            "total_tokens": len(tokens),
+            "total_tokens": token_count,
         },
+    )
+
+
+async def generate_assistant_tokens(
+    settings: Settings,
+    req: ChatMessageRequest,
+) -> AsyncIterator[str]:
+    if settings.groq_api_key != "":
+        async for token in stream_groq_tokens(settings, req):
+            yield token
+        return
+    response_text = build_stub_response(req.message, req.language)
+    for token in response_text.split():
+        yield f"{token} "
+
+
+async def stream_groq_tokens(settings: Settings, req: ChatMessageRequest) -> AsyncIterator[str]:
+    model = ChatGroq(
+        model=settings.groq_model,
+        max_tokens=settings.groq_max_tokens,
+        temperature=0.2,
+        timeout=30,
+        max_retries=1,
+    )
+    system_prompt = build_system_prompt(req.language)
+    async for chunk in model.astream(
+        [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=req.message.strip()),
+        ]
+    ):
+        content = cast(str | list[str | dict[str, object]], chunk.content)
+        if isinstance(content, str) and content != "":
+            yield content
+
+
+def build_system_prompt(language: str) -> str:
+    relevant_titles = ", ".join(chunk.title for chunk in knowledge_chunks.values())
+    knowledge = relevant_titles if relevant_titles else "No curated knowledge chunks are available."
+    preferred_language = "Hindi" if language.lower().startswith("hi") else "English"
+    return (
+        "You are Khetibadi AI, an expert agricultural assistant for Indian farmers. "
+        "Give practical, safe, locally relevant farm advice. Use concise steps, mention "
+        "weather, soil moisture, pests, and mandi prices when relevant. If required context "
+        "is unavailable, say so plainly and continue with general guidance. "
+        f"Respond in {preferred_language}. Relevant knowledge titles: {knowledge}"
     )
 
 

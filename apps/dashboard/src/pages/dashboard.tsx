@@ -342,6 +342,8 @@ export function AIAssistantPage() {
     enabled: activeSession !== null,
   });
   const [streamText, setStreamText] = useState("");
+  const [streamError, setStreamError] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
 
   async function ensureSession(): Promise<ChatSession> {
     if (activeSession !== null) {
@@ -356,23 +358,38 @@ export function AIAssistantPage() {
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setStreamText("");
+    setStreamError("");
+    setIsStreaming(true);
     const session = await ensureSession();
     setActiveSession(session.id);
-    const token = getAccessToken();
-    const headers = new Headers({ "Content-Type": "application/json" });
-    if (token !== null) {
-      headers.set("Authorization", `Bearer ${token}`);
+    try {
+      const token = getAccessToken();
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (token !== null) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      const response = await fetch(`${apiBaseURL()}/ai/chat/sessions/${session.id}/messages`, {
+        body: JSON.stringify({ message, language: "en" }),
+        credentials: "include",
+        headers,
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`Chat request failed with HTTP ${response.status}`);
+      }
+      await readChatStream(response, {
+        onDone: () => { setMessage(""); },
+        onError: (error) => { setStreamError(error); },
+        onToken: (token) => { setStreamText((current) => `${current}${token}`); },
+      });
+      await queryClient.invalidateQueries({ queryKey: chatKeys.messages(session.id) });
+      await queryClient.invalidateQueries({ queryKey: chatKeys.sessions() });
+      setStreamText("");
+    } catch (error) {
+      setStreamError(error instanceof Error ? error.message : "Chat request failed");
+    } finally {
+      setIsStreaming(false);
     }
-    const response = await fetch(`${apiBaseURL()}/ai/chat/sessions/${session.id}/messages`, {
-      body: JSON.stringify({ message, language: "en" }),
-      credentials: "include",
-      headers,
-      method: "POST",
-    });
-    const body = await response.text();
-    setStreamText(body.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.replace("data: ", "")).join("\n"));
-    await queryClient.invalidateQueries({ queryKey: chatKeys.messages(session.id) });
-    await queryClient.invalidateQueries({ queryKey: chatKeys.sessions() });
   }
 
   return (
@@ -395,11 +412,12 @@ export function AIAssistantPage() {
             {(messages.data ?? []).map((item) => (
               <p className="rounded-2xl bg-[#fffaf0] p-3 text-sm text-[#5f4a33] shadow-sm" key={item.id}><strong>{item.role}:</strong> {item.content}</p>
             ))}
-            {streamText !== "" ? <pre className="whitespace-pre-wrap rounded-2xl bg-[#e3eadb] p-3 text-sm text-[#2f5d3a]">{streamText}</pre> : null}
+            {streamText !== "" ? <p className="whitespace-pre-wrap rounded-2xl bg-[#e3eadb] p-3 text-sm leading-6 text-[#2f5d3a]"><strong>assistant:</strong> {streamText}</p> : null}
+            {streamError !== "" ? <p className="rounded-2xl bg-[#f5d7ce] p-3 text-sm font-semibold text-[#8a2f22]">{streamError}</p> : null}
           </div>
           <form className="space-y-3" onSubmit={(event) => { void submit(event); }}>
             <Textarea value={message} onChange={(event) => { setMessage(event.target.value); }} />
-            <Button type="submit">Send message</Button>
+            <Button loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
           </form>
         </CardContent>
       </Card>
@@ -417,6 +435,88 @@ export function SettingsPage() {
       </CardContent>
     </Card>
   );
+}
+
+type ChatStreamHandlers = {
+  onDone: () => void;
+  onError: (error: string) => void;
+  onToken: (token: string) => void;
+};
+
+async function readChatStream(response: Response, handlers: ChatStreamHandlers): Promise<void> {
+  if (response.body === null) {
+    parseChatStreamText(await response.text(), handlers);
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const split = buffer.split("\n\n");
+      buffer = split.pop() ?? "";
+      for (const block of split) {
+        handleChatStreamBlock(block, handlers);
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim() !== "") {
+      handleChatStreamBlock(buffer, handlers);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseChatStreamText(text: string, handlers: ChatStreamHandlers): void {
+  for (const block of text.split("\n\n")) {
+    if (block.trim() !== "") {
+      handleChatStreamBlock(block, handlers);
+    }
+  }
+}
+
+function handleChatStreamBlock(block: string, handlers: ChatStreamHandlers): void {
+  const lines = block.split("\n");
+  const eventLine = lines.find((line) => line.startsWith("event: "));
+  const dataLine = lines.find((line) => line.startsWith("data: "));
+  if (eventLine === undefined || dataLine === undefined) {
+    return;
+  }
+  const event = eventLine.replace("event: ", "").trim();
+  const data = parseStreamPayload(dataLine.replace("data: ", ""));
+  if (event === "token") {
+    const token = typeof data.token === "string" ? data.token : "";
+    if (token !== "") {
+      handlers.onToken(token);
+    }
+    return;
+  }
+  if (event === "done") {
+    handlers.onDone();
+    return;
+  }
+  if (event === "error") {
+    const error = typeof data.error === "string" ? data.error : "chat_stream_failed";
+    handlers.onError(error);
+  }
+}
+
+function parseStreamPayload(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
 }
 
 function StatCard({ label, value }: { label: string; value: number }) {

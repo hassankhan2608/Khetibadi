@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=DEFAULT_LEARNING_RATE)
     parser.add_argument("--validation-split", type=float, default=0.2)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--progress-every", type=int, default=25)
     parser.add_argument("--freeze-backbone", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--no-pretrained", action="store_true")
     return parser.parse_args()
@@ -58,6 +60,7 @@ def train_from_image_folder(
     learning_rate: float = DEFAULT_LEARNING_RATE,
     validation_split: float = 0.2,
     num_workers: int = 0,
+    progress_every: int = 25,
     freeze_backbone: bool = True,
     pretrained: bool = True,
 ) -> TrainResult:
@@ -95,8 +98,30 @@ def train_from_image_folder(
 
     history: list[dict[str, float]] = []
     for epoch in range(epochs):
-        train_loss, train_accuracy = run_epoch(model, train_loader, criterion, optimizer, device)
+        emit_progress(
+            {
+                "device": str(device),
+                "epoch": epoch + 1,
+                "epochs": epochs,
+                "event": "epoch_start",
+                "train_batches": len(train_loader),
+                "val_batches": len(val_loader),
+            }
+        )
+        started_at = time.monotonic()
+        train_loss, train_accuracy = run_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            epoch=epoch + 1,
+            epochs=epochs,
+            progress_every=progress_every,
+        )
+        emit_progress({"epoch": epoch + 1, "event": "validation_start"})
         val_loss, val_accuracy = evaluate(model, val_loader, criterion, device)
+        duration_seconds = round(time.monotonic() - started_at, 2)
         history.append(
             {
                 "epoch": float(epoch + 1),
@@ -104,6 +129,17 @@ def train_from_image_folder(
                 "train_accuracy": train_accuracy,
                 "val_loss": val_loss,
                 "val_accuracy": val_accuracy,
+            }
+        )
+        emit_progress(
+            {
+                "duration_seconds": duration_seconds,
+                "epoch": epoch + 1,
+                "event": "epoch_done",
+                "train_accuracy": round(train_accuracy, 6),
+                "train_loss": round(train_loss, 6),
+                "val_accuracy": round(val_accuracy, 6),
+                "val_loss": round(val_loss, 6),
             }
         )
 
@@ -122,6 +158,7 @@ def train_from_image_folder(
         "learning_rate": learning_rate,
         "validation_split": validation_split,
         "freeze_backbone": freeze_backbone,
+        "progress_every": progress_every,
         "history": history,
     }
     return TrainResult(model=model.cpu(), classes=list(train_base.classes), metadata=metadata)
@@ -216,12 +253,17 @@ def run_epoch(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
+    *,
+    epoch: int,
+    epochs: int,
+    progress_every: int,
 ) -> tuple[float, float]:
     model.train()
     total_loss = 0.0
     correct = 0
     seen = 0
-    for images, labels in loader:
+    total_batches = len(loader)
+    for batch_index, (images, labels) in enumerate(loader, start=1):
         images = images.to(device)
         labels = labels.to(device)
         optimizer.zero_grad(set_to_none=True)
@@ -233,6 +275,18 @@ def run_epoch(
         total_loss += float(loss.item()) * batch_size
         correct += int((logits.argmax(dim=1) == labels).sum().item())
         seen += batch_size
+        if progress_every > 0 and (batch_index == 1 or batch_index % progress_every == 0):
+            emit_progress(
+                {
+                    "accuracy": round(correct / max(seen, 1), 6),
+                    "batch": batch_index,
+                    "batches": total_batches,
+                    "epoch": epoch,
+                    "epochs": epochs,
+                    "event": "train_batch",
+                    "loss": round(total_loss / max(seen, 1), 6),
+                }
+            )
     return total_loss / max(seen, 1), correct / max(seen, 1)
 
 
@@ -287,6 +341,11 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def emit_progress(payload: dict[str, object]) -> None:
+    sys.stderr.write(json.dumps(payload, sort_keys=True) + "\n")
+    sys.stderr.flush()
+
+
 def main() -> None:
     args = parse_args()
     result = train_from_image_folder(
@@ -296,6 +355,7 @@ def main() -> None:
         learning_rate=cast(float, args.learning_rate),
         validation_split=cast(float, args.validation_split),
         num_workers=cast(int, args.num_workers),
+        progress_every=cast(int, args.progress_every),
         freeze_backbone=cast(bool, args.freeze_backbone),
         pretrained=not cast(bool, args.no_pretrained),
     )

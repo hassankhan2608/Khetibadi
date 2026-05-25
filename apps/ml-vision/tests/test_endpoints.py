@@ -30,6 +30,12 @@ def png_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def wallpaper_bytes() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (128, 128), color=(110, 90, 180)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def test_detect_returns_stub_result(monkeypatch: MonkeyPatch) -> None:
     secret = "test-hmac-secret-minimum-32-chars"
     monkeypatch.setenv("HMAC_SECRET", secret)
@@ -47,6 +53,25 @@ def test_detect_returns_stub_result(monkeypatch: MonkeyPatch) -> None:
     assert body["model_mode"] == "stub"
     assert body["metadata"]["width"] == 128
     assert body["metadata"]["height"] == 128
+
+
+def test_detect_rejects_obvious_non_plant_image(monkeypatch: MonkeyPatch) -> None:
+    secret = "test-hmac-secret-minimum-32-chars"
+    monkeypatch.setenv("HMAC_SECRET", secret)
+    monkeypatch.setenv("ML_ALLOW_STUB_MODE", "true")
+    client = TestClient(app)
+
+    response = client.post(
+        "/ml/vision/detect",
+        headers=auth_headers(secret),
+        files={"image": ("wallpaper.png", wallpaper_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["disease"] == "not_plant"
+    assert body["warning"] == "non_plant_image"
+    assert body["confidence"] == 0
 
 
 def test_invalid_file_type_is_rejected(monkeypatch: MonkeyPatch) -> None:

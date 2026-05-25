@@ -9,6 +9,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -31,6 +32,11 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MIN_IMAGE_SIDE = 64
 JOB_TTL_SECONDS = 3600
 IMAGE_SIZE = 224
+OOD_IMAGE_SIZE = 96
+MIN_PLANT_PIXEL_RATIO = 0.03
+MIN_AMBIGUOUS_PLANT_RATIO = 0.08
+MIN_EDGE_RATIO = 0.015
+MIN_MEAN_SATURATION = 0.06
 
 logger = logging.getLogger(SERVICE_NAME)
 
@@ -65,6 +71,14 @@ class VisionArtifact(BaseModel):
     model: Any
     classes: list[str]
     metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PlantImageAssessment:
+    plant_pixel_ratio: float
+    edge_ratio: float
+    mean_saturation: float
+    plant_like: bool
 
 
 class DetectionJob(BaseModel):
@@ -287,6 +301,10 @@ async def read_image(image: UploadFile) -> bytes:
 def build_detection(image: UploadFile, image_bytes: bytes) -> DiseaseDetection:
     artifact = vision_artifact
     metadata = inspect_image(image, image_bytes)
+    assessment = assess_plant_likelihood(image_bytes)
+    if not assessment.plant_like:
+        model_mode: Literal["model", "stub"] = "model" if artifact is not None else "stub"
+        return non_plant_detection(image_bytes, metadata, model_mode)
     if artifact is not None:
         return predict_detection(image_bytes, metadata, artifact)
     ensure_stub_available()
@@ -366,6 +384,86 @@ def predict_detection(
         annotated_image_base64=encode_image(image_bytes),
         model_mode="model",
         warning=None,
+        metadata=metadata,
+    )
+
+
+def assess_plant_likelihood(image_bytes: bytes) -> PlantImageAssessment:
+    with Image.open(BytesIO(image_bytes)) as opened:
+        hsv_image = opened.convert("RGB").resize((OOD_IMAGE_SIZE, OOD_IMAGE_SIZE)).convert("HSV")
+    flatten = getattr(hsv_image, "get_flattened_data", None)
+    pixels = list(flatten()) if callable(flatten) else list(hsv_image.getdata())
+    total = len(pixels)
+    if total == 0:
+        return PlantImageAssessment(
+            plant_pixel_ratio=0,
+            edge_ratio=0,
+            mean_saturation=0,
+            plant_like=False,
+        )
+    plant_pixels = 0
+    saturation_sum = 0.0
+    luminance: list[float] = []
+    for hue_raw, saturation_raw, value_raw in pixels:
+        hue = (hue_raw / 255) * 360
+        saturation = saturation_raw / 255
+        value = value_raw / 255
+        saturation_sum += saturation
+        luminance.append(value)
+        is_green = 55 <= hue <= 165 and saturation >= 0.18 and value >= 0.12
+        is_dry_leaf = 18 <= hue < 55 and saturation >= 0.15 and value >= 0.18
+        if is_green or is_dry_leaf:
+            plant_pixels += 1
+    plant_ratio = plant_pixels / total
+    edge_ratio = luminance_edge_ratio(luminance, OOD_IMAGE_SIZE)
+    mean_saturation = saturation_sum / total
+    plant_like = (
+        plant_ratio >= MIN_PLANT_PIXEL_RATIO
+        and mean_saturation >= MIN_MEAN_SATURATION
+        and (plant_ratio >= MIN_AMBIGUOUS_PLANT_RATIO or edge_ratio >= MIN_EDGE_RATIO)
+    )
+    return PlantImageAssessment(
+        plant_pixel_ratio=plant_ratio,
+        edge_ratio=edge_ratio,
+        mean_saturation=mean_saturation,
+        plant_like=plant_like,
+    )
+
+
+def luminance_edge_ratio(luminance: list[float], width: int) -> float:
+    if width <= 1:
+        return 0
+    edge_pixels = 0
+    comparisons = 0
+    for y in range(width - 1):
+        row = y * width
+        next_row = (y + 1) * width
+        for x in range(width - 1):
+            index = row + x
+            dx = abs(luminance[index] - luminance[index + 1])
+            dy = abs(luminance[index] - luminance[next_row + x])
+            if max(dx, dy) >= 0.10:
+                edge_pixels += 1
+            comparisons += 1
+    if comparisons == 0:
+        return 0
+    return edge_pixels / comparisons
+
+
+def non_plant_detection(
+    image_bytes: bytes,
+    metadata: ImageMetadata,
+    model_mode: Literal["model", "stub"],
+) -> DiseaseDetection:
+    return DiseaseDetection(
+        disease="not_plant",
+        confidence=0,
+        is_healthy=False,
+        background_removed=False,
+        fallback_resize=metadata.width < IMAGE_SIZE or metadata.height < IMAGE_SIZE,
+        annotated_image_base64=encode_image(image_bytes),
+        model_mode=model_mode,
+        warning="non_plant_image",
         metadata=metadata,
     )
 
