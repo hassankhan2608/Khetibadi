@@ -49,6 +49,7 @@ export function DashboardLayout() {
               <Link
                 key={item.to}
                 to={item.to}
+                activeOptions={{ exact: true }}
                 className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-[#e9dcc5] transition hover:bg-[#fffaf0]/10 hover:text-white [&.active]:bg-[#f3dfb4] [&.active]:text-[#2f5d3a] [&.active]:shadow-lg [&.active]:shadow-[#1e3d27]/20"
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
@@ -63,7 +64,7 @@ export function DashboardLayout() {
         </div>
       </aside>
       <main className="lg:pl-[19rem]">
-        <header className="sticky top-0 z-10 border-b border-[#d8c4a5] bg-[#fffaf0]/85 px-6 py-4 backdrop-blur-xl">
+        <header className="sticky top-0 z-10 border-b border-[#d8c4a5] bg-[#fffaf0]/85 px-4 py-4 backdrop-blur-xl md:px-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-semibold text-[#b87924]">Welcome back</p>
@@ -74,6 +75,22 @@ export function DashboardLayout() {
               Logout
             </Button>
           </div>
+          <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden" aria-label="Primary navigation">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  activeOptions={{ exact: true }}
+                  className="flex shrink-0 items-center gap-2 rounded-full border border-[#d8c4a5] bg-[#fffaf0] px-3 py-2 text-xs font-extrabold text-[#6d5a40] shadow-sm transition hover:bg-[#f7eddc] [&.active]:border-[#2f5d3a] [&.active]:bg-[#2f5d3a] [&.active]:text-[#fffaf0]"
+                >
+                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
         </header>
         <div className="p-5 md:p-8">
           <Outlet />

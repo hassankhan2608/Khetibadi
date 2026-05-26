@@ -259,6 +259,7 @@ export function CropAdvisorPage() {
 
 export function DiseaseScanPage() {
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const detect = useMutation({ mutationFn: visionApi.detect });
   const fileSelected = file !== null;
 
@@ -270,11 +271,19 @@ export function DiseaseScanPage() {
   }
 
   function updateFile(event: ChangeEvent<HTMLInputElement>): void {
-    setFile(event.target.files?.[0] ?? null);
+    const nextFile = event.target.files?.[0] ?? null;
+    setFile(nextFile);
+    detect.reset();
+  }
+
+  function clearFile(): void {
+    setFile(null);
+    detect.reset();
+    setFileInputKey((key) => key + 1);
   }
 
   return (
-    <section className="grid gap-6 lg:grid-cols-[380px_1fr]">
+    <section className="grid gap-6 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
       <Card>
         <CardHeader>
           <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[#b87924]">Plant health</p>
@@ -283,10 +292,19 @@ export function DiseaseScanPage() {
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>
             <Label>Leaf image</Label>
-            <Input accept="image/png,image/jpeg" onChange={updateFile} required type="file" />
-            {fileSelected ? <p className="text-sm font-semibold text-[#2f5d3a]">Selected {file.name}</p> : null}
+            <label className="flex min-h-44 cursor-pointer flex-col items-center justify-center gap-3 rounded-[1.5rem] border-2 border-dashed border-[#cdb58f] bg-[#fffaf0] px-5 py-8 text-center text-sm font-semibold text-[#6d5a40] transition hover:border-[#2f5d3a] hover:bg-[#f7eddc]">
+              <span className="text-lg font-black text-[#2f5d3a]">Upload leaf photo</span>
+              <span>Choose or drag a JPEG/PNG crop-leaf image. Minimum 64×64 pixels.</span>
+              <Input key={fileInputKey} accept="image/png,image/jpeg" className="sr-only" onChange={updateFile} required type="file" />
+            </label>
+            {fileSelected ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d8c4a5] bg-[#f7eddc] p-3 text-sm font-semibold text-[#2f5d3a]">
+                <span>Selected {file.name}</span>
+                <Button onClick={clearFile} type="button" variant="ghost">Change</Button>
+              </div>
+            ) : null}
             {detect.error ? <p className="text-sm font-semibold text-[#8a2f22]">Scan failed. Upload a JPEG or PNG at least 64×64.</p> : null}
-            <Button disabled={!fileSelected} loading={detect.isPending} type="submit">Scan plant</Button>
+            <Button className="w-full" disabled={!fileSelected} loading={detect.isPending} type="submit">Scan plant</Button>
           </form>
         </CardContent>
       </Card>
@@ -419,31 +437,35 @@ export function AIAssistantPage() {
   }
 
   return (
-    <section className="grid gap-6 lg:grid-cols-[300px_1fr]">
-      <Card>
+    <section className="grid min-h-[calc(100vh-13rem)] gap-6 lg:min-h-[calc(100vh-9rem)] xl:grid-cols-[320px_minmax(0,1fr)]">
+      <Card className="h-full xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)]">
         <CardHeader><CardTitle>Sessions</CardTitle></CardHeader>
-        <CardContent className="space-y-2">
-          <Button onClick={() => { createSession.mutate({ title: "Field advisory" }); }} variant="secondary">New chat</Button>
-          {(sessions.data ?? []).map((session) => (
-            <button className="block w-full rounded-2xl border border-[#d8c4a5] bg-[#fffaf0] px-3 py-2 text-left text-sm font-semibold text-[#5f4a33] hover:bg-[#f7eddc]" key={session.id} onClick={() => { setActiveSession(session.id); }} type="button">
-              {session.title}
-            </button>
-          ))}
+        <CardContent className="flex h-full flex-col gap-3 overflow-hidden">
+          <Button className="w-full" onClick={() => { createSession.mutate({ title: "Field advisory" }); }} variant="secondary">New chat</Button>
+          <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
+            {(sessions.data ?? []).map((session) => (
+              <button className="block w-full rounded-2xl border border-[#d8c4a5] bg-[#fffaf0] px-3 py-3 text-left text-sm font-semibold text-[#5f4a33] hover:bg-[#f7eddc]" key={session.id} onClick={() => { setActiveSession(session.id); }} type="button">
+                {session.title}
+              </button>
+            ))}
+          </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader><CardTitle>AI assistant</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="max-h-80 space-y-3 overflow-auto rounded-[1.5rem] border border-[#e7d8bf] bg-[#f7eddc] p-4">
+      <Card className="flex min-h-[calc(100vh-13rem)] flex-col overflow-hidden lg:min-h-[calc(100vh-9rem)]">
+        <CardHeader className="shrink-0"><CardTitle>AI assistant</CardTitle></CardHeader>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
+          <div className="min-h-[50vh] flex-1 space-y-4 overflow-auto rounded-[1.5rem] border border-[#e7d8bf] bg-[#f7eddc] p-4 sm:p-5 lg:min-h-[calc(100vh-21rem)]">
             {(messages.data ?? []).map((item) => (
-              <p className="rounded-2xl bg-[#fffaf0] p-3 text-sm text-[#5f4a33] shadow-sm" key={item.id}><strong>{item.role}:</strong> {item.content}</p>
+              <p className="max-w-[82ch] rounded-2xl bg-[#fffaf0] p-4 text-sm leading-6 text-[#5f4a33] shadow-sm" key={item.id}><strong>{item.role}:</strong> {item.content}</p>
             ))}
-            {streamText !== "" ? <p className="whitespace-pre-wrap rounded-2xl bg-[#e3eadb] p-3 text-sm leading-6 text-[#2f5d3a]"><strong>assistant:</strong> {streamText}</p> : null}
+            {streamText !== "" ? <p className="max-w-[82ch] whitespace-pre-wrap rounded-2xl bg-[#e3eadb] p-4 text-sm leading-6 text-[#2f5d3a]"><strong>assistant:</strong> {streamText}</p> : null}
             {streamError !== "" ? <p className="rounded-2xl bg-[#f5d7ce] p-3 text-sm font-semibold text-[#8a2f22]">{streamError}</p> : null}
           </div>
-          <form className="space-y-3" onSubmit={(event) => { void submit(event); }}>
-            <Textarea placeholder="Ask about irrigation, pests, crop planning, or mandi decisions." value={message} onChange={(event) => { setMessage(event.target.value); }} />
-            <Button disabled={message.trim() === "" || isStreaming} loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
+          <form className="shrink-0 space-y-3" onSubmit={(event) => { void submit(event); }}>
+            <Textarea className="min-h-32" placeholder="Ask about irrigation, pests, crop planning, or mandi decisions." value={message} onChange={(event) => { setMessage(event.target.value); }} />
+            <div className="flex justify-end">
+              <Button disabled={message.trim() === "" || isStreaming} loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
+            </div>
           </form>
         </CardContent>
       </Card>
