@@ -373,6 +373,8 @@ export function AIAssistantPage() {
   const sessions = useQuery({ queryKey: chatKeys.sessions(), queryFn: chatApi.sessions });
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const createSession = useMutation({
     mutationFn: chatApi.createSession,
     onSuccess: async (session) => {
@@ -408,12 +410,23 @@ export function AIAssistantPage() {
     setActiveSession(session.id);
     try {
       const token = getAccessToken();
-      const headers = new Headers({ "Content-Type": "application/json" });
+      const headers = new Headers();
       if (token !== null) {
         headers.set("Authorization", `Bearer ${token}`);
       }
+      let body: BodyInit;
+      if (attachment === null) {
+        headers.set("Content-Type", "application/json");
+        body = JSON.stringify({ message, language: "en" });
+      } else {
+        const form = new FormData();
+        form.set("message", message);
+        form.set("language", "en");
+        form.set("image", attachment);
+        body = form;
+      }
       const response = await fetch(`${apiBaseURL()}/ai/chat/sessions/${session.id}/messages`, {
-        body: JSON.stringify({ message, language: "en" }),
+        body,
         credentials: "include",
         headers,
         method: "POST",
@@ -422,7 +435,11 @@ export function AIAssistantPage() {
         throw new Error(`Chat request failed with HTTP ${response.status}`);
       }
       await readChatStream(response, {
-        onDone: () => { setMessage(""); },
+        onDone: () => {
+          setMessage("");
+          setAttachment(null);
+          setAttachmentInputKey((current) => current + 1);
+        },
         onError: (error) => { setStreamError(error); },
         onToken: (token) => { setStreamText((current) => `${current}${token}`); },
       });
@@ -463,6 +480,25 @@ export function AIAssistantPage() {
           </div>
           <form className="shrink-0 space-y-3" onSubmit={(event) => { void submit(event); }}>
             <Textarea className="min-h-32" placeholder="Ask about irrigation, pests, crop planning, or mandi decisions." value={message} onChange={(event) => { setMessage(event.target.value); }} />
+            <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-[#d8c4a5] bg-[#fffaf0] p-3 text-sm text-[#6d5a40] sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-[#2d2217]">Optional leaf image</p>
+                <p>{attachment === null ? "Attach a crop photo when you want disease detection." : `Attached ${attachment.name}`}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {attachment !== null ? <Button onClick={() => { setAttachment(null); setAttachmentInputKey((current) => current + 1); }} type="button" variant="ghost">Remove</Button> : null}
+                <label className="cursor-pointer rounded-full border border-[#d8c4a5] px-4 py-2 text-sm font-bold text-[#2f5d3a] hover:bg-[#f7eddc]">
+                  Attach image
+                  <input
+                    accept="image/png,image/jpeg"
+                    className="sr-only"
+                    key={attachmentInputKey}
+                    onChange={(event) => { setAttachment(event.target.files?.[0] ?? null); }}
+                    type="file"
+                  />
+                </label>
+              </div>
+            </div>
             <div className="flex justify-end">
               <Button disabled={message.trim() === "" || isStreaming} loading={isStreaming} type="submit">{isStreaming ? "Thinking…" : "Send message"}</Button>
             </div>

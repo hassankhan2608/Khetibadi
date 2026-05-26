@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     chat_retention_days: int = Field(default=90, ge=1)
     hmac_secret: str = Field(default="")
     ai_chat_allow_fake_llm: bool = Field(default=False)
+    farm_service_url: str = Field(default="http://farm-service:8001")
+    market_service_url: str = Field(default="http://market-service:8002")
+    ml_crop_service_url: str = Field(default="http://ml-crop:8010")
+    ml_vision_service_url: str = Field(default="http://ml-vision:8011")
 
 
 def get_settings() -> Settings:

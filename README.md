@@ -13,12 +13,16 @@ ML, and chat services over the Docker network.
 - Market prices synced by workers from data.gov.in / AGMARKNET into the market service.
 - Crop, yield, and fertilizer model training scripts with local artifact loading.
 - Plant disease ResNet34 training script and local checkpoint loading.
-- AI chat routes with explicit local fallback mode until Groq/RAG persistence is completed.
+- AI chat routes backed by Groq when `GROQ_API_KEY` is set, with farmer-context tools
+  for farms, weather, market prices, crop/yield/fertilizer models, and image disease detection.
 
 Several persistence layers are still in-memory while the no-mock readiness plan is being
 implemented. Large datasets and trained model artifacts are intentionally ignored by Git.
 
 ## Architecture
+
+Detailed AI agent HLD/LLD diagrams and tool-call flowcharts are in
+[`docs/ai-agent-architecture.md`](docs/ai-agent-architecture.md).
 
 ```mermaid
 flowchart LR
