@@ -251,7 +251,7 @@ export function CropAdvisorPage() {
       <div className="grid gap-4">
         <ResultCard title="Crop recommendation" body={recommend.data ? `${recommend.data.crop} (${Math.round(recommend.data.confidence * 100)}%)` : "Submit soil and climate data."} />
         <ResultCard title="Yield forecast" body={yieldPredict.data ? `${yieldPredict.data.predicted_yield_tonnes} tonnes total` : "Waiting for forecast."} />
-        <ResultCard title="Fertilizer plan" body={fertilizer.data ? `N ${fertilizer.data.nitrogen_kg_per_ha} / P ${fertilizer.data.phosphorus_kg_per_ha} / K ${fertilizer.data.potassium_kg_per_ha} kg/ha` : "Waiting for plan."} />
+        <ResultCard title="Fertilizer plan" body={fertilizer.data ? fertilizerPlanText(fertilizer.data) : "Waiting for plan."} />
       </div>
     </section>
   );
@@ -609,6 +609,10 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 function ResultCard({ body, title }: { body: string; title: string }) {
   return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><p className="text-[#5f4a33]">{body}</p></CardContent></Card>;
+}
+
+function fertilizerPlanText(plan: { nitrogen_kg_per_ha: number; phosphorus_kg_per_ha: number; potassium_kg_per_ha: number; recommendation: string }): string {
+  return `${plan.recommendation}: Nitrogen ${plan.nitrogen_kg_per_ha} kg/ha, Phosphorus ${plan.phosphorus_kg_per_ha} kg/ha, Potassium ${plan.potassium_kg_per_ha} kg/ha`;
 }
 
 function TextField({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder?: string; value: string }) {

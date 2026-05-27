@@ -13,7 +13,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "composite": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "tests", "playwright.config.ts"]
 }
