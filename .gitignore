@@ -39,6 +39,7 @@ apps/ml-vision/models/*.pth
 apps/ml-vision/models/*.pt
 apps/ml-vision/models/*.onnx
 apps/ml-vision/models/*.metadata.json
+apps/ml-vision/models/*.ood.json
 data/**
 !data/.gitkeep
 models/**/*.pkl
@@ -46,6 +47,7 @@ models/**/*.pth
 models/**/*.pt
 models/**/*.onnx
 models/**/*.metadata.json
+models/**/*.ood.json
 
 # ─── Node / Bun ───────────────────────────────────────────────────────────────
 node_modules/

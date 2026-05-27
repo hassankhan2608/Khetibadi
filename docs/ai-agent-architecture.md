@@ -128,8 +128,9 @@ flowchart LR
 
 ## Current implementation limits
 
-- Chat sessions/messages are still in memory; Postgres persistence is planned.
-- RAG knowledge is still in-memory text chunks; pgvector retrieval is planned.
-- Redis-backed rate limiting is planned; current rate limiting is in memory.
+- Chat sessions/messages/knowledge are persisted in Postgres when `DATABASE_URL` is reachable.
+- Redis-backed per-user rate limiting is active when `REDIS_URL` is reachable.
+- In-memory fallback remains available for isolated local tests; set `CHAT_STORAGE_REQUIRED=true` to fail startup instead of falling back.
+- pgvector semantic retrieval is still planned; knowledge chunks are persisted text and included by title/context today.
 - Tool-calling is real, but the model may choose not to call a tool if the prompt is general.
-- Vision non-plant detection is a heuristic OOD gate; a production-grade gate needs negative examples and calibration.
+- Vision non-plant detection now combines HSV/edge heuristics with an optional negative-image OOD profile generated from PlantVillage plus natural-image negatives. A production-grade gate can still be improved with a larger farm-specific negative set.

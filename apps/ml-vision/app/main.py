@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -35,8 +36,10 @@ IMAGE_SIZE = 224
 OOD_IMAGE_SIZE = 96
 MIN_PLANT_PIXEL_RATIO = 0.03
 MIN_AMBIGUOUS_PLANT_RATIO = 0.08
+MIN_STRONG_PLANT_RATIO = 0.20
 MIN_EDGE_RATIO = 0.015
 MIN_MEAN_SATURATION = 0.06
+DEFAULT_OOD_THRESHOLD = 0.70
 
 logger = logging.getLogger(SERVICE_NAME)
 
@@ -71,6 +74,8 @@ class VisionArtifact(BaseModel):
     model: Any
     classes: list[str]
     metadata: dict[str, Any]
+    ood_centroid: list[float] | None = None
+    ood_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -273,7 +278,28 @@ def load_vision_artifact(path: Path) -> VisionArtifact:
     model = create_resnet34(len(class_names))
     model.load_state_dict(state_dict)
     model.eval()
-    return VisionArtifact(model=model, classes=class_names, metadata=metadata)
+    centroid, threshold = load_ood_profile(path)
+    return VisionArtifact(
+        model=model,
+        classes=class_names,
+        metadata=metadata,
+        ood_centroid=centroid,
+        ood_threshold=threshold,
+    )
+
+
+def load_ood_profile(path: Path) -> tuple[list[float] | None, float | None]:
+    profile_path = path.with_suffix(".ood.json")
+    if not profile_path.exists():
+        logger.warning("vision OOD profile missing; using HSV heuristic only")
+        return None, None
+    payload = json.loads(profile_path.read_text())
+    centroid = payload.get("plant_centroid")
+    threshold = payload.get("threshold")
+    if not isinstance(centroid, list) or not isinstance(threshold, int | float):
+        logger.warning("vision OOD profile invalid; using HSV heuristic only")
+        return None, None
+    return [float(item) for item in centroid], float(threshold)
 
 
 def create_resnet34(num_classes: int) -> nn.Module:
@@ -301,7 +327,7 @@ async def read_image(image: UploadFile) -> bytes:
 def build_detection(image: UploadFile, image_bytes: bytes) -> DiseaseDetection:
     artifact = vision_artifact
     metadata = inspect_image(image, image_bytes)
-    assessment = assess_plant_likelihood(image_bytes)
+    assessment = assess_plant_likelihood(image_bytes, vision_artifact)
     if not assessment.plant_like:
         model_mode: Literal["model", "stub"] = "model" if artifact is not None else "stub"
         return non_plant_detection(image_bytes, metadata, model_mode)
@@ -388,7 +414,10 @@ def predict_detection(
     )
 
 
-def assess_plant_likelihood(image_bytes: bytes) -> PlantImageAssessment:
+def assess_plant_likelihood(
+    image_bytes: bytes,
+    artifact: VisionArtifact | None = None,
+) -> PlantImageAssessment:
     with Image.open(BytesIO(image_bytes)) as opened:
         hsv_image = opened.convert("RGB").resize((OOD_IMAGE_SIZE, OOD_IMAGE_SIZE)).convert("HSV")
     flatten = getattr(hsv_image, "get_flattened_data", None)
@@ -417,17 +446,36 @@ def assess_plant_likelihood(image_bytes: bytes) -> PlantImageAssessment:
     plant_ratio = plant_pixels / total
     edge_ratio = luminance_edge_ratio(luminance, OOD_IMAGE_SIZE)
     mean_saturation = saturation_sum / total
-    plant_like = (
+    heuristic_plant_like = (
         plant_ratio >= MIN_PLANT_PIXEL_RATIO
         and mean_saturation >= MIN_MEAN_SATURATION
         and (plant_ratio >= MIN_AMBIGUOUS_PLANT_RATIO or edge_ratio >= MIN_EDGE_RATIO)
     )
+    vector_plant_like = ood_profile_accepts(
+        [plant_ratio, edge_ratio, mean_saturation], artifact
+    )
+    strong_plant_like = (
+        plant_ratio >= MIN_STRONG_PLANT_RATIO
+        and mean_saturation >= MIN_MEAN_SATURATION
+        and edge_ratio >= MIN_EDGE_RATIO
+    )
+    plant_like = heuristic_plant_like and (vector_plant_like or strong_plant_like)
     return PlantImageAssessment(
         plant_pixel_ratio=plant_ratio,
         edge_ratio=edge_ratio,
         mean_saturation=mean_saturation,
         plant_like=plant_like,
     )
+
+
+def ood_profile_accepts(features: list[float], artifact: VisionArtifact | None) -> bool:
+    if artifact is None or artifact.ood_centroid is None or artifact.ood_threshold is None:
+        return True
+    distance = sum(
+        (value - centroid_value) ** 2
+        for value, centroid_value in zip(features, artifact.ood_centroid, strict=True)
+    ) ** 0.5
+    return bool(distance <= artifact.ood_threshold)
 
 
 def luminance_edge_ratio(luminance: list[float], width: int) -> float:

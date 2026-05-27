@@ -6,17 +6,20 @@ import hashlib
 import hmac
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 import httpx
+import redis.asyncio as redis
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, status
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_groq import ChatGroq
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -32,6 +35,8 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_TOOL_RESULT_CHARS = 3000
 
 logger = structlog.get_logger(SERVICE_NAME)
+db_pool: AsyncConnectionPool | None = None
+redis_client: redis.Redis | None = None
 
 
 class AuthUser(BaseModel):
@@ -101,9 +106,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         env=settings.app_env,
         port=settings.port,
     )
+    await initialize_storage(settings)
     try:
         yield
     finally:
+        await close_storage()
         logger.info("service stopped cleanly", service=SERVICE_NAME)
 
 
@@ -112,6 +119,108 @@ sessions: dict[str, ChatSession] = {}
 messages: dict[str, list[ChatMessage]] = {}
 knowledge_chunks: dict[str, KnowledgeChunk] = {}
 rate_limits: dict[str, list[datetime]] = {}
+
+
+async def initialize_storage(settings: Settings) -> None:
+    global db_pool, redis_client
+    try:
+        pool = AsyncConnectionPool(
+            settings.database_url,
+            open=False,
+            min_size=1,
+            max_size=4,
+            kwargs={"row_factory": dict_row},
+        )
+        await pool.open()
+        await ensure_database_schema(pool)
+        db_pool = pool
+        await load_knowledge_chunks()
+    except Exception as exc:
+        logger.warning("postgres chat storage unavailable", error=str(exc))
+        if settings.chat_storage_required:
+            raise
+    try:
+        client = redis.from_url(settings.redis_url, decode_responses=True)
+        await cast(Awaitable[object], client.ping())
+        redis_client = client
+    except Exception as exc:
+        logger.warning("redis chat rate limiter unavailable", error=str(exc))
+        if settings.chat_storage_required:
+            raise
+
+
+async def close_storage() -> None:
+    global db_pool, redis_client
+    if db_pool is not None:
+        await db_pool.close()
+        db_pool = None
+    if redis_client is not None:
+        await redis_client.aclose()
+        redis_client = None
+
+
+async def ensure_database_schema(pool: AsyncConnectionPool) -> None:
+    async with pool.connection() as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id UUID PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id UUID PRIMARY KEY,
+                session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
+                created_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_chunks (
+                id UUID PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS chat_sessions_user_updated_idx "
+            "ON chat_sessions (user_id, updated_at DESC)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS chat_messages_session_created_idx "
+            "ON chat_messages (session_id, created_at ASC)"
+        )
+
+
+async def load_knowledge_chunks() -> None:
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        rows = await conn.execute(
+            """
+            SELECT id::text, title, content, source, created_at
+            FROM knowledge_chunks
+            ORDER BY created_at DESC
+            LIMIT 100
+            """
+        )
+        loaded = [KnowledgeChunk.model_validate(row) async for row in rows]
+    knowledge_chunks.clear()
+    knowledge_chunks.update({chunk.id: chunk for chunk in loaded})
 
 
 def require_hmac_user(
@@ -174,8 +283,8 @@ async def chat_health() -> dict[str, object]:
         "status": "ok" if llm_ready else "degraded",
         "service": SERVICE_NAME,
         "llm_mode": "groq" if settings.groq_api_key else "stub",
-        "database": "in_memory",
-        "redis": "in_memory",
+        "database": "postgres" if db_pool is not None else "in_memory",
+        "redis": "redis" if redis_client is not None else "in_memory",
     }
 
 
@@ -189,29 +298,25 @@ async def create_session(req: ChatSessionCreate, user: AuthDependency) -> dict[s
         created_at=now,
         updated_at=now,
     )
-    sessions[session.id] = session
-    messages[session.id] = []
+    await save_session(session)
     return {"session": session}
 
 
 @app.get("/ai/chat/sessions")
 async def list_sessions(user: AuthDependency) -> dict[str, list[ChatSession]]:
-    visible = [session for session in sessions.values() if session.user_id == user.user_id]
-    visible.sort(key=lambda session: session.updated_at, reverse=True)
-    return {"sessions": visible}
+    return {"sessions": await find_sessions(user.user_id)}
 
 
 @app.delete("/ai/chat/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str, user: AuthDependency) -> None:
-    session = get_owned_session(session_id, user.user_id)
-    del sessions[session.id]
-    messages.pop(session.id, None)
+    session = await get_owned_session(session_id, user.user_id)
+    await remove_session(session.id)
 
 
 @app.get("/ai/chat/sessions/{session_id}/messages")
 async def list_messages(session_id: str, user: AuthDependency) -> dict[str, list[ChatMessage]]:
-    session = get_owned_session(session_id, user.user_id)
-    return {"messages": messages.get(session.id, [])}
+    session = await get_owned_session(session_id, user.user_id)
+    return {"messages": await find_messages(session.id)}
 
 
 @app.post("/ai/chat/sessions/{session_id}/messages")
@@ -220,8 +325,8 @@ async def send_message(
     request: Request,
     user: AuthDependency,
 ) -> StreamingResponse:
-    session = get_owned_session(session_id, user.user_id)
-    enforce_rate_limit(user.user_id)
+    session = await get_owned_session(session_id, user.user_id)
+    await enforce_rate_limit(user.user_id)
     agent_request, attachment = await parse_agent_request(request)
     now = datetime.now(UTC)
     user_message = ChatMessage(
@@ -232,8 +337,9 @@ async def send_message(
         content=message_with_attachment_note(agent_request.message, attachment),
         created_at=now,
     )
-    messages.setdefault(session.id, []).append(user_message)
+    await save_message(user_message)
     session.updated_at = now
+    await update_session_timestamp(session.id, now)
     return StreamingResponse(
         stream_response(session, user.user_id, agent_request, attachment),
         media_type="text/event-stream",
@@ -250,7 +356,7 @@ async def add_knowledge(req: KnowledgeRequest, _: AuthDependency) -> dict[str, K
         source=req.source.strip(),
         created_at=datetime.now(UTC),
     )
-    knowledge_chunks[chunk.id] = chunk
+    await save_knowledge(chunk)
     return {"chunk": chunk}
 
 
@@ -283,8 +389,9 @@ async def stream_response(
                 status="incomplete",
                 created_at=datetime.now(UTC),
             )
-            messages.setdefault(session.id, []).append(assistant)
+            await save_message(assistant)
             session.updated_at = assistant.created_at
+            await update_session_timestamp(session.id, assistant.created_at)
         logger.warning("chat stream failed", error=str(exc), session_id=session.id)
         yield sse_event("error", {"error": "llm_stream_failed"})
         return
@@ -297,8 +404,9 @@ async def stream_response(
         content=response_text,
         created_at=datetime.now(UTC),
     )
-    messages.setdefault(session.id, []).append(assistant)
+    await save_message(assistant)
     session.updated_at = assistant.created_at
+    await update_session_timestamp(session.id, assistant.created_at)
     yield sse_event(
         "done",
         {
@@ -897,8 +1005,122 @@ def trim_tool_result(value: str) -> str:
     return f"{value[:MAX_TOOL_RESULT_CHARS]}..."
 
 
-def get_owned_session(session_id: str, user_id: str) -> ChatSession:
+async def save_session(session: ChatSession) -> None:
+    sessions[session.id] = session
+    messages.setdefault(session.id, [])
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (session.id, session.user_id, session.title, session.created_at, session.updated_at),
+        )
+
+
+async def find_sessions(user_id: str) -> list[ChatSession]:
+    if db_pool is None:
+        visible = [session for session in sessions.values() if session.user_id == user_id]
+        visible.sort(key=lambda session: session.updated_at, reverse=True)
+        return visible
+    async with db_pool.connection() as conn:
+        rows = await conn.execute(
+            """
+            SELECT id::text, user_id, title, created_at, updated_at
+            FROM chat_sessions
+            WHERE user_id = %s
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        )
+        return [session_from_row(cast(dict[str, object], row)) async for row in rows]
+
+
+async def remove_session(session_id: str) -> None:
+    sessions.pop(session_id, None)
+    messages.pop(session_id, None)
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        await conn.execute("DELETE FROM chat_sessions WHERE id = %s", (session_id,))
+
+
+async def update_session_timestamp(session_id: str, updated_at: datetime) -> None:
     session = sessions.get(session_id)
+    if session is not None:
+        session.updated_at = updated_at
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        await conn.execute(
+            "UPDATE chat_sessions SET updated_at = %s WHERE id = %s",
+            (updated_at, session_id),
+        )
+
+
+async def save_message(message: ChatMessage) -> None:
+    messages.setdefault(message.session_id, []).append(message)
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO chat_messages (id, session_id, user_id, role, content, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                message.id,
+                message.session_id,
+                message.user_id,
+                message.role,
+                message.content,
+                message.status,
+                message.created_at,
+            ),
+        )
+
+
+async def find_messages(session_id: str) -> list[ChatMessage]:
+    if db_pool is None:
+        return messages.get(session_id, [])
+    async with db_pool.connection() as conn:
+        rows = await conn.execute(
+            """
+            SELECT id::text, session_id::text, user_id, role, content, status, created_at
+            FROM chat_messages
+            WHERE session_id = %s
+            ORDER BY created_at ASC
+            """,
+            (session_id,),
+        )
+        return [message_from_row(cast(dict[str, object], row)) async for row in rows]
+
+
+async def save_knowledge(chunk: KnowledgeChunk) -> None:
+    knowledge_chunks[chunk.id] = chunk
+    if db_pool is None:
+        return
+    async with db_pool.connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO knowledge_chunks (id, title, content, source, created_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                source = EXCLUDED.source
+            """,
+            (chunk.id, chunk.title, chunk.content, chunk.source, chunk.created_at),
+        )
+
+
+async def get_owned_session(session_id: str, user_id: str) -> ChatSession:
+    session = await find_session(session_id)
     if session is None or session.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -907,11 +1129,52 @@ def get_owned_session(session_id: str, user_id: str) -> ChatSession:
     return session
 
 
-def enforce_rate_limit(user_id: str) -> None:
+async def find_session(session_id: str) -> ChatSession | None:
+    if db_pool is None:
+        return sessions.get(session_id)
+    async with db_pool.connection() as conn:
+        row = await conn.execute(
+            """
+            SELECT id::text, user_id, title, created_at, updated_at
+            FROM chat_sessions
+            WHERE id = %s
+            """,
+            (session_id,),
+        )
+        item = await row.fetchone()
+    if item is None:
+        return None
+    return session_from_row(cast(dict[str, object], item))
+
+
+def session_from_row(row: dict[str, object]) -> ChatSession:
+    return ChatSession.model_validate(row)
+
+
+def message_from_row(row: dict[str, object]) -> ChatMessage:
+    return ChatMessage.model_validate(row)
+
+
+async def enforce_rate_limit(user_id: str) -> None:
     settings = get_settings()
+    if redis_client is not None:
+        now_score = time.time()
+        key = f"chat:ratelimit:{user_id}"
+        window_start = now_score - RATE_WINDOW_SECONDS
+        await redis_client.zremrangebyscore(key, 0, window_start)
+        await redis_client.zadd(key, {str(uuid4()): now_score})
+        await redis_client.expire(key, RATE_WINDOW_SECONDS)
+        count = await redis_client.zcard(key)
+        if count > settings.chat_rate_limit_per_minute:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": "rate_limited", "message": "chat rate limit exceeded"},
+                headers={"Retry-After": str(RATE_WINDOW_SECONDS)},
+            )
+        return
     now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=RATE_WINDOW_SECONDS)
-    recent = [seen_at for seen_at in rate_limits.get(user_id, []) if seen_at >= window_start]
+    window_start_dt = now - timedelta(seconds=RATE_WINDOW_SECONDS)
+    recent = [seen_at for seen_at in rate_limits.get(user_id, []) if seen_at >= window_start_dt]
     if len(recent) >= settings.chat_rate_limit_per_minute:
         rate_limits[user_id] = recent
         raise HTTPException(

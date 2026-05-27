@@ -9,10 +9,12 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import dist
 from pathlib import Path
 from typing import Any, cast
 
 import torch
+from PIL import Image, UnidentifiedImageError
 from torch import nn, optim
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import datasets, models, transforms
@@ -28,6 +30,8 @@ IMAGE_SIZE = 224
 DEFAULT_EPOCHS = 3
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_LEARNING_RATE = 1e-3
+OOD_IMAGE_SIZE = 96
+DEFAULT_NEGATIVE_DIR = REPO_ROOT / "data" / "kaggle" / "natural-images" / "data" / "natural_images"
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-split", type=float, default=0.2)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=25)
+    parser.add_argument("--negative-dir", type=Path, default=DEFAULT_NEGATIVE_DIR)
     parser.add_argument("--freeze-backbone", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--no-pretrained", action="store_true")
     return parser.parse_args()
@@ -164,7 +169,11 @@ def train_from_image_folder(
     return TrainResult(model=model.cpu(), classes=list(train_base.classes), metadata=metadata)
 
 
-def save_checkpoint(result: TrainResult, output_path: Path) -> None:
+def save_checkpoint(
+    result: TrainResult,
+    output_path: Path,
+    negative_dir: Path | None = None,
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -179,6 +188,103 @@ def save_checkpoint(result: TrainResult, output_path: Path) -> None:
         json.dumps(result.metadata, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    if negative_dir is not None and negative_dir.exists():
+        save_ood_profile(result.metadata["dataset_dir"], negative_dir, output_path)
+
+
+def save_ood_profile(dataset_dir_value: object, negative_dir: Path, output_path: Path) -> None:
+    dataset_dir = Path(str(dataset_dir_value))
+    plant_features = sample_image_features(dataset_dir, limit_per_class=30)
+    negative_features = sample_image_features(negative_dir, limit_per_class=80)
+    if not plant_features or not negative_features:
+        return
+    centroid = [
+        sum(row[index] for row in plant_features) / len(plant_features)
+        for index in range(len(plant_features[0]))
+    ]
+    plant_distances = [dist(row, centroid) for row in plant_features]
+    negative_distances = [dist(row, centroid) for row in negative_features]
+    threshold = min(max(plant_distances) * 1.10, percentile(negative_distances, 0.10) * 0.90)
+    profile = {
+        "created_at": datetime.now(UTC).isoformat(),
+        "plant_samples": len(plant_features),
+        "negative_samples": len(negative_features),
+        "plant_centroid": centroid,
+        "threshold": max(threshold, 0.05),
+        "negative_dataset_dir": str(negative_dir),
+    }
+    output_path.with_suffix(".ood.json").write_text(
+        json.dumps(profile, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def sample_image_features(root: Path, *, limit_per_class: int) -> list[list[float]]:
+    features: list[list[float]] = []
+    for class_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        count = 0
+        for image_path in sorted(class_dir.iterdir()):
+            if count >= limit_per_class:
+                break
+            feature = image_ood_features(image_path)
+            if feature is not None:
+                features.append(feature)
+                count += 1
+    return features
+
+
+def image_ood_features(path: Path) -> list[float] | None:
+    try:
+        with Image.open(path) as opened:
+            image = opened.convert("RGB").resize((OOD_IMAGE_SIZE, OOD_IMAGE_SIZE)).convert("HSV")
+    except (OSError, UnidentifiedImageError):
+        return None
+    flatten = getattr(image, "get_flattened_data", None)
+    pixels = list(flatten()) if callable(flatten) else list(image.getdata())
+    if not pixels:
+        return None
+    plant_pixels = 0
+    saturation_sum = 0.0
+    luminance: list[float] = []
+    for hue_raw, saturation_raw, value_raw in pixels:
+        hue = (hue_raw / 255) * 360
+        saturation = saturation_raw / 255
+        value = value_raw / 255
+        saturation_sum += saturation
+        luminance.append(value)
+        is_green = 55 <= hue <= 165 and saturation >= 0.18 and value >= 0.12
+        is_dry_leaf = 18 <= hue < 55 and saturation >= 0.15 and value >= 0.18
+        if is_green or is_dry_leaf:
+            plant_pixels += 1
+    return [
+        plant_pixels / len(pixels),
+        luminance_edge_ratio(luminance),
+        saturation_sum / len(pixels),
+    ]
+
+
+def luminance_edge_ratio(luminance: list[float]) -> float:
+    edge_pixels = 0
+    comparisons = 0
+    for y in range(OOD_IMAGE_SIZE - 1):
+        row = y * OOD_IMAGE_SIZE
+        next_row = (y + 1) * OOD_IMAGE_SIZE
+        for x in range(OOD_IMAGE_SIZE - 1):
+            index = row + x
+            dx = abs(luminance[index] - luminance[index + 1])
+            dy = abs(luminance[index] - luminance[next_row + x])
+            if max(dx, dy) >= 0.10:
+                edge_pixels += 1
+            comparisons += 1
+    return edge_pixels / comparisons if comparisons else 0
+
+
+def percentile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0
+    index = min(len(ordered) - 1, max(0, int(len(ordered) * fraction)))
+    return ordered[index]
 
 
 def create_model(
@@ -359,7 +465,7 @@ def main() -> None:
         freeze_backbone=cast(bool, args.freeze_backbone),
         pretrained=not cast(bool, args.no_pretrained),
     )
-    save_checkpoint(result, cast(Path, args.output))
+    save_checkpoint(result, cast(Path, args.output), cast(Path, args.negative_dir))
     final_metrics = result.metadata["history"][-1]
     sys.stdout.write(
         json.dumps(

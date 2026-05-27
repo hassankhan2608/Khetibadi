@@ -46,11 +46,13 @@ apps/ml-vision/models/*.pth
 apps/ml-vision/models/*.pt
 apps/ml-vision/models/*.onnx
 apps/ml-vision/models/*.metadata.json
+apps/ml-vision/models/*.ood.json
 models/**/*.pkl
 models/**/*.pth
 models/**/*.pt
 models/**/*.onnx
 models/**/*.metadata.json
+models/**/*.ood.json
 
 # Editor/OS noise and logs
 .DS_Store

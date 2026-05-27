@@ -16,8 +16,9 @@ ML, and chat services over the Docker network.
 - AI chat routes backed by Groq when `GROQ_API_KEY` is set, with farmer-context tools
   for farms, weather, market prices, crop/yield/fertilizer models, and image disease detection.
 
-Several persistence layers are still in-memory while the no-mock readiness plan is being
-implemented. Large datasets and trained model artifacts are intentionally ignored by Git.
+Auth/farm/market persistence work remains in progress. AI chat now uses Postgres for
+sessions/messages/knowledge and Redis for rate limiting when those services are reachable.
+Large datasets and trained model artifacts are intentionally ignored by Git.
 
 ## Architecture
 
@@ -61,6 +62,7 @@ Important keys:
 | `DATA_GOV_IN_API_KEY` | data.gov.in / AGMARKNET market price fetch. |
 | `MARKET_DATA_API_URL` | data.gov.in resource URL, default resource `9ef84268-d588-465a-a308-a864a43d0070`. |
 | `GROQ_API_KEY` | Required for real Groq-backed AI chat streaming. |
+| `CHAT_STORAGE_REQUIRED` | Set `true` to fail ai-chat startup if Postgres or Redis is unavailable. |
 | `VITE_API_BASE_URL` | Browser API origin. Keep this as the only public API URL. |
 
 Local fallback flags are present for development but default to `false`:
@@ -227,10 +229,10 @@ Implemented vertical slice:
 
 Still planned in `openspec/changes/no-mock-model-data-readiness`:
 
-- Postgres/sqlc persistence for auth, farms, market prices, alerts, chat, and refresh tokens.
+- Postgres/sqlc persistence for auth, farms, market prices, alerts, and refresh tokens.
 - Redis-backed weather and market caches instead of in-memory maps.
 - Redis-backed ml-vision async job result store.
-- Real Groq + pgvector RAG implementation for AI chat.
+- pgvector semantic retrieval for AI chat knowledge chunks.
 - Production-mode fallback flags off by default in compose profiles.
 - Broader automated Playwright suite checked into source.
 

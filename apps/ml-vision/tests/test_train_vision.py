@@ -8,6 +8,7 @@ from scripts.train_vision import (
     RANDOM_SEED,
     create_model,
     dataset_fingerprint,
+    sample_image_features,
     save_checkpoint,
     train_from_image_folder,
 )
@@ -54,3 +55,26 @@ def test_create_model_replaces_classifier_head() -> None:
     assert isinstance(classifier, nn.Linear)
     assert classifier.out_features == 3
     assert classifier.weight.requires_grad
+
+
+def test_save_checkpoint_writes_ood_profile(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "plantvillage"
+    negative_dir = tmp_path / "negative"
+    for index in range(3):
+        write_image(dataset_dir / "apple_healthy" / f"apple_{index}.png", (40, 160, 60))
+        write_image(dataset_dir / "tomato_late_blight" / f"tomato_{index}.png", (160, 60, 40))
+        write_image(negative_dir / "wall" / f"wall_{index}.png", (130, 80, 200))
+
+    result = train_from_image_folder(
+        dataset_dir,
+        epochs=1,
+        batch_size=2,
+        validation_split=0.33,
+        freeze_backbone=True,
+        pretrained=False,
+    )
+    output_path = tmp_path / "resnet34_plantvillage.pth"
+    save_checkpoint(result, output_path, negative_dir)
+
+    assert output_path.with_suffix(".ood.json").exists()
+    assert sample_image_features(negative_dir, limit_per_class=2)
