@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -33,6 +34,8 @@ CONTEXT_TIMEOUT_SECONDS = 2
 MAX_TOOL_ROUNDS = 1
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_TOOL_RESULT_CHARS = 3000
+MAX_RECENT_CHAT_MESSAGES = 8
+ChatChannel = Literal["dashboard", "whatsapp"]
 
 logger = structlog.get_logger(SERVICE_NAME)
 db_pool: AsyncConnectionPool | None = None
@@ -45,12 +48,16 @@ class AuthUser(BaseModel):
 
 class ChatSessionCreate(BaseModel):
     title: str = Field(default="New conversation", min_length=1, max_length=120)
+    channel: ChatChannel = "dashboard"
+    external_thread_id: str | None = Field(default=None, max_length=180)
 
 
 class ChatSession(BaseModel):
     id: str
     user_id: str
     title: str
+    channel: ChatChannel = "dashboard"
+    external_thread_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -63,12 +70,30 @@ class ChatMessageRequest(BaseModel):
 class AgentRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     language: str = Field(default="en", min_length=2, max_length=20)
+    account_name: str | None = Field(default=None, max_length=120)
+
+
+class BridgeMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    language: str = Field(default="en", min_length=2, max_length=20)
+    channel: Literal["whatsapp"] = "whatsapp"
+    external_thread_id: str = Field(min_length=1, max_length=180)
+    account_name: str | None = Field(default=None, max_length=120)
+    title: str = Field(default="WhatsApp conversation", min_length=1, max_length=120)
+
+
+class BridgeMessageResponse(BaseModel):
+    session_id: str
+    message_id: str
+    response: str
+    status: Literal["complete", "incomplete"]
 
 
 class ChatMessage(BaseModel):
     id: str
     session_id: str
     user_id: str
+    channel: ChatChannel = "dashboard"
     role: Literal["user", "assistant"]
     content: str
     status: Literal["complete", "incomplete"] = "complete"
@@ -167,6 +192,8 @@ async def ensure_database_schema(pool: AsyncConnectionPool) -> None:
                 id UUID PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 title TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'dashboard',
+                external_thread_id TEXT,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL
             )
@@ -178,6 +205,7 @@ async def ensure_database_schema(pool: AsyncConnectionPool) -> None:
                 id UUID PRIMARY KEY,
                 session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
                 user_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'dashboard',
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
                 content TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('complete', 'incomplete')),
@@ -196,9 +224,24 @@ async def ensure_database_schema(pool: AsyncConnectionPool) -> None:
             )
             """
         )
+        await conn.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS channel TEXT")
+        await conn.execute(
+            "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS external_thread_id TEXT"
+        )
+        await conn.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS channel TEXT")
+        await conn.execute("UPDATE chat_sessions SET channel = 'dashboard' WHERE channel IS NULL")
+        await conn.execute("UPDATE chat_messages SET channel = 'dashboard' WHERE channel IS NULL")
+        await conn.execute("ALTER TABLE chat_sessions ALTER COLUMN channel SET DEFAULT 'dashboard'")
+        await conn.execute("ALTER TABLE chat_messages ALTER COLUMN channel SET DEFAULT 'dashboard'")
+        await conn.execute("ALTER TABLE chat_sessions ALTER COLUMN channel SET NOT NULL")
+        await conn.execute("ALTER TABLE chat_messages ALTER COLUMN channel SET NOT NULL")
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_sessions_user_updated_idx "
             "ON chat_sessions (user_id, updated_at DESC)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS chat_sessions_user_channel_thread_idx "
+            "ON chat_sessions (user_id, channel, external_thread_id)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS chat_messages_session_created_idx "
@@ -295,6 +338,8 @@ async def create_session(req: ChatSessionCreate, user: AuthDependency) -> dict[s
         id=str(uuid4()),
         user_id=user.user_id,
         title=req.title.strip(),
+        channel=req.channel,
+        external_thread_id=req.external_thread_id,
         created_at=now,
         updated_at=now,
     )
@@ -333,6 +378,7 @@ async def send_message(
         id=str(uuid4()),
         session_id=session.id,
         user_id=user.user_id,
+        channel=session.channel,
         role="user",
         content=message_with_attachment_note(agent_request.message, attachment),
         created_at=now,
@@ -340,10 +386,97 @@ async def send_message(
     await save_message(user_message)
     session.updated_at = now
     await update_session_timestamp(session.id, now)
+    recent_messages = await recent_chat_history(session.id, exclude_message_id=user_message.id)
     return StreamingResponse(
-        stream_response(session, user.user_id, agent_request, attachment),
+        stream_response(session, user.user_id, agent_request, attachment, recent_messages),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/ai/chat/internal/bridge/messages")
+async def send_bridge_message(
+    req: BridgeMessageRequest,
+    user: AuthDependency,
+) -> dict[str, BridgeMessageResponse]:
+    settings = get_settings()
+    try:
+        response = await asyncio.wait_for(
+            process_bridge_message(req, user.user_id),
+            timeout=settings.bridge_ai_timeout_seconds,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "ai_timeout", "message": "AI assistant timed out"},
+        ) from exc
+    return {"message": response}
+
+
+async def process_bridge_message(
+    req: BridgeMessageRequest,
+    user_id: str,
+) -> BridgeMessageResponse:
+    settings = get_settings()
+    if settings.groq_api_key == "" and not settings.ai_chat_allow_fake_llm:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "llm_unavailable", "message": "AI assistant is unavailable"},
+        )
+    await enforce_rate_limit(user_id)
+    session = await find_or_create_bridge_session(user_id, req)
+    now = datetime.now(UTC)
+    user_message = ChatMessage(
+        id=str(uuid4()),
+        session_id=session.id,
+        user_id=user_id,
+        channel=req.channel,
+        role="user",
+        content=req.message.strip(),
+        created_at=now,
+    )
+    await save_message(user_message)
+    await update_session_timestamp(session.id, now)
+
+    response_parts: list[str] = []
+    response_status: Literal["complete", "incomplete"] = "complete"
+    agent_request = AgentRequest(
+        message=req.message,
+        language=req.language,
+        account_name=req.account_name,
+    )
+    try:
+        recent_messages = await recent_chat_history(session.id, exclude_message_id=user_message.id)
+        async for token in generate_assistant_tokens(
+            settings, user_id, agent_request, None, recent_messages
+        ):
+            response_parts.append(token)
+    except Exception as exc:
+        response_status = "incomplete"
+        logger.warning("bridge chat generation failed", error=str(exc), session_id=session.id)
+    response_text = "".join(response_parts).strip()
+    if response_text == "":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "ai_unavailable", "message": "AI assistant failed to respond"},
+        )
+    assistant = ChatMessage(
+        id=str(uuid4()),
+        session_id=session.id,
+        user_id=user_id,
+        channel=req.channel,
+        role="assistant",
+        content=response_text,
+        status=response_status,
+        created_at=datetime.now(UTC),
+    )
+    await save_message(assistant)
+    await update_session_timestamp(session.id, assistant.created_at)
+    return BridgeMessageResponse(
+        session_id=session.id,
+        message_id=assistant.id,
+        response=response_text,
+        status=response_status,
     )
 
 
@@ -365,6 +498,7 @@ async def stream_response(
     user_id: str,
     req: AgentRequest,
     attachment: ChatAttachment | None,
+    recent_messages: list[ChatMessage],
 ) -> AsyncIterator[str]:
     settings = get_settings()
     if settings.groq_api_key == "" and not settings.ai_chat_allow_fake_llm:
@@ -373,7 +507,9 @@ async def stream_response(
     token_count = 0
     response_parts: list[str] = []
     try:
-        async for token in generate_assistant_tokens(settings, user_id, req, attachment):
+        async for token in generate_assistant_tokens(
+            settings, user_id, req, attachment, recent_messages
+        ):
             response_parts.append(token)
             yield sse_event("token", {"token": token, "index": token_count})
             token_count += 1
@@ -384,6 +520,7 @@ async def stream_response(
                 id=str(uuid4()),
                 session_id=session.id,
                 user_id=user_id,
+                channel=session.channel,
                 role="assistant",
                 content=partial,
                 status="incomplete",
@@ -400,6 +537,7 @@ async def stream_response(
         id=str(uuid4()),
         session_id=session.id,
         user_id=user_id,
+        channel=session.channel,
         role="assistant",
         content=response_text,
         created_at=datetime.now(UTC),
@@ -422,9 +560,12 @@ async def generate_assistant_tokens(
     user_id: str,
     req: AgentRequest,
     attachment: ChatAttachment | None,
+    recent_messages: list[ChatMessage] | None = None,
 ) -> AsyncIterator[str]:
     if settings.groq_api_key != "":
-        async for token in stream_groq_tokens(settings, user_id, req, attachment):
+        async for token in stream_groq_tokens(
+            settings, user_id, req, attachment, recent_messages or []
+        ):
             yield token
         return
     response_text = build_stub_response(req.message, req.language)
@@ -488,6 +629,7 @@ def build_user_prompt(
     req: AgentRequest,
     attachment: ChatAttachment | None,
     tool_context: dict[str, object],
+    recent_messages: list[ChatMessage],
 ) -> str:
     attachment_note = ""
     if attachment is not None:
@@ -495,13 +637,54 @@ def build_user_prompt(
             f"\nAttached crop image: {attachment.filename} ({attachment.content_type}, "
             f"{attachment.size_bytes} bytes). Use detect_plant_disease if image diagnosis matters."
         )
-    context_json = json.dumps(
-        compact_tool_context(tool_context), default=str, ensure_ascii=False
-    )[:MAX_TOOL_RESULT_CHARS]
+    context_json = json.dumps(compact_tool_context(tool_context), default=str, ensure_ascii=False)[
+        :MAX_TOOL_RESULT_CHARS
+    ]
+    history_text = render_recent_history(recent_messages)
+    history_section = ""
+    if history_text != "":
+        history_section = f"\nRecent conversation in this thread:\n{history_text}"
     return (
-        f"Farmer question: {req.message.strip()}{attachment_note}\n"
+        f"Farmer question: {req.message.strip()}{attachment_note}{history_section}\n"
         f"Preloaded farmer context: {context_json}"
     )
+
+
+def render_recent_history(recent_messages: list[ChatMessage]) -> str:
+    lines: list[str] = []
+    for message in recent_messages[-MAX_RECENT_CHAT_MESSAGES:]:
+        content = message.content.strip()
+        if content == "":
+            continue
+        role = "Farmer" if message.role == "user" else "Khetibadi AI"
+        lines.append(f"{role}: {content[:500]}")
+    return "\n".join(lines)
+
+
+def should_preload_market_data(message: str) -> bool:
+    normalized = message.lower()
+    keywords = (
+        "market",
+        "mandi",
+        "price",
+        "prices",
+        "rate",
+        "rates",
+        "modal",
+        "sell",
+        "selling",
+        "buyer",
+        "commodity",
+        "agmarknet",
+        "bazaar",
+        "bazar",
+        "भाव",
+        "कीमत",
+        "मंडी",
+        "दाम",
+        "रेट",
+    )
+    return any(keyword in normalized for keyword in keywords)
 
 
 async def build_tool_context(
@@ -511,17 +694,18 @@ async def build_tool_context(
     attachment: ChatAttachment | None,
 ) -> dict[str, object]:
     farms = await fetch_tool_json(settings.farm_service_url, "/farms", user_id)
-    context: dict[str, object] = {
-        "farms": farms,
-        "market_prices": await fetch_tool_json(
+    context: dict[str, object] = {"farms": farms}
+    if should_preload_market_data(req.message):
+        context["market_prices"] = await fetch_tool_json(
             settings.market_service_url, "/market/prices?limit=5", user_id
-        ),
-        "market_alerts": await fetch_tool_json(
+        )
+        context["market_alerts"] = await fetch_tool_json(
             settings.market_service_url,
             "/market/alerts",
             user_id,
-        ),
-    }
+        )
+    if req.account_name is not None and req.account_name.strip() != "":
+        context["farmer_profile"] = {"name": req.account_name.strip()}
     farm_id = first_farm_id(farms)
     if farm_id is not None:
         context["primary_farm_weather"] = await fetch_tool_json(
@@ -566,6 +750,7 @@ async def stream_groq_tokens(
     user_id: str,
     req: AgentRequest,
     attachment: ChatAttachment | None,
+    recent_messages: list[ChatMessage],
 ) -> AsyncIterator[str]:
     tool_context = await build_tool_context(settings, user_id, req, attachment)
     model = ChatGroq(
@@ -578,7 +763,7 @@ async def stream_groq_tokens(
     model_with_tools = model.bind_tools(agent_tool_specs())
     messages_for_model: list[SystemMessage | HumanMessage | AIMessage | ToolMessage] = [
         SystemMessage(content=build_system_prompt(req.language, tool_context)),
-        HumanMessage(content=build_user_prompt(req, attachment, tool_context)),
+        HumanMessage(content=build_user_prompt(req, attachment, tool_context, recent_messages)),
     ]
     for _ in range(MAX_TOOL_ROUNDS):
         ai_message = await model_with_tools.ainvoke(messages_for_model)
@@ -628,6 +813,9 @@ def build_system_prompt(language: str, tool_context: dict[str, object]) -> str:
 
 def compact_tool_context(tool_context: dict[str, object]) -> dict[str, object]:
     compact: dict[str, object] = {}
+    farmer_profile = tool_context.get("farmer_profile")
+    if isinstance(farmer_profile, dict):
+        compact["farmer_profile"] = compact_value(farmer_profile)
     farms = tool_context.get("farms")
     if isinstance(farms, dict):
         data = farms.get("data")
@@ -692,8 +880,7 @@ def agent_tool_specs() -> list[dict[str, object]]:
             "function": {
                 "name": "get_farms",
                 "description": (
-                    "Fetch the authenticated farmer's farms, boundaries, soil type, "
-                    "crop, and area."
+                    "Fetch the authenticated farmer's farms, boundaries, soil type, crop, and area."
                 ),
                 "parameters": {"type": "object", "properties": {}},
             },
@@ -752,8 +939,7 @@ def agent_tool_specs() -> list[dict[str, object]]:
             "function": {
                 "name": "recommend_crop",
                 "description": (
-                    "Run the crop recommendation model for soil nutrients "
-                    "and weather features."
+                    "Run the crop recommendation model for soil nutrients and weather features."
                 ),
                 "parameters": crop_feature_schema(),
             },
@@ -1013,13 +1199,25 @@ async def save_session(session: ChatSession) -> None:
     async with db_pool.connection() as conn:
         await conn.execute(
             """
-            INSERT INTO chat_sessions (id, user_id, title, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO chat_sessions (
+                id, user_id, title, channel, external_thread_id, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
+                channel = EXCLUDED.channel,
+                external_thread_id = EXCLUDED.external_thread_id,
                 updated_at = EXCLUDED.updated_at
             """,
-            (session.id, session.user_id, session.title, session.created_at, session.updated_at),
+            (
+                session.id,
+                session.user_id,
+                session.title,
+                session.channel,
+                session.external_thread_id,
+                session.created_at,
+                session.updated_at,
+            ),
         )
 
 
@@ -1031,7 +1229,7 @@ async def find_sessions(user_id: str) -> list[ChatSession]:
     async with db_pool.connection() as conn:
         rows = await conn.execute(
             """
-            SELECT id::text, user_id, title, created_at, updated_at
+            SELECT id::text, user_id, title, channel, external_thread_id, created_at, updated_at
             FROM chat_sessions
             WHERE user_id = %s
             ORDER BY updated_at DESC
@@ -1070,13 +1268,16 @@ async def save_message(message: ChatMessage) -> None:
     async with db_pool.connection() as conn:
         await conn.execute(
             """
-            INSERT INTO chat_messages (id, session_id, user_id, role, content, status, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO chat_messages (
+                id, session_id, user_id, channel, role, content, status, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 message.id,
                 message.session_id,
                 message.user_id,
+                message.channel,
                 message.role,
                 message.content,
                 message.status,
@@ -1091,7 +1292,7 @@ async def find_messages(session_id: str) -> list[ChatMessage]:
     async with db_pool.connection() as conn:
         rows = await conn.execute(
             """
-            SELECT id::text, session_id::text, user_id, role, content, status, created_at
+            SELECT id::text, session_id::text, user_id, channel, role, content, status, created_at
             FROM chat_messages
             WHERE session_id = %s
             ORDER BY created_at ASC
@@ -1099,6 +1300,13 @@ async def find_messages(session_id: str) -> list[ChatMessage]:
             (session_id,),
         )
         return [message_from_row(cast(dict[str, object], row)) async for row in rows]
+
+
+async def recent_chat_history(session_id: str, exclude_message_id: str) -> list[ChatMessage]:
+    history = [
+        message for message in await find_messages(session_id) if message.id != exclude_message_id
+    ]
+    return history[-MAX_RECENT_CHAT_MESSAGES:]
 
 
 async def save_knowledge(chunk: KnowledgeChunk) -> None:
@@ -1135,11 +1343,60 @@ async def find_session(session_id: str) -> ChatSession | None:
     async with db_pool.connection() as conn:
         row = await conn.execute(
             """
-            SELECT id::text, user_id, title, created_at, updated_at
+            SELECT id::text, user_id, title, channel, external_thread_id, created_at, updated_at
             FROM chat_sessions
             WHERE id = %s
             """,
             (session_id,),
+        )
+        item = await row.fetchone()
+    if item is None:
+        return None
+    return session_from_row(cast(dict[str, object], item))
+
+
+async def find_or_create_bridge_session(user_id: str, req: BridgeMessageRequest) -> ChatSession:
+    existing = await find_bridge_session(user_id, req.channel, req.external_thread_id)
+    if existing is not None:
+        return existing
+    now = datetime.now(UTC)
+    session = ChatSession(
+        id=str(uuid4()),
+        user_id=user_id,
+        title=req.title.strip(),
+        channel=req.channel,
+        external_thread_id=req.external_thread_id,
+        created_at=now,
+        updated_at=now,
+    )
+    await save_session(session)
+    return session
+
+
+async def find_bridge_session(
+    user_id: str,
+    channel: ChatChannel,
+    external_thread_id: str,
+) -> ChatSession | None:
+    if db_pool is None:
+        for session in sessions.values():
+            if (
+                session.user_id == user_id
+                and session.channel == channel
+                and session.external_thread_id == external_thread_id
+            ):
+                return session
+        return None
+    async with db_pool.connection() as conn:
+        row = await conn.execute(
+            """
+            SELECT id::text, user_id, title, channel, external_thread_id, created_at, updated_at
+            FROM chat_sessions
+            WHERE user_id = %s AND channel = %s AND external_thread_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (user_id, channel, external_thread_id),
         )
         item = await row.fetchone()
     if item is None:

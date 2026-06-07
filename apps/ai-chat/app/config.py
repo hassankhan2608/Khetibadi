@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     groq_model: str = Field(default="llama-3.3-70b-versatile")
     groq_max_tokens: int = Field(default=1024, ge=1)
     chat_rate_limit_per_minute: int = Field(default=30, ge=1)
+    bridge_ai_timeout_seconds: int = Field(default=60, ge=1)
     chat_retention_days: int = Field(default=90, ge=1)
     chat_storage_required: bool = Field(default=False)
     hmac_secret: str = Field(default="")
