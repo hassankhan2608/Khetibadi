@@ -2,6 +2,7 @@
         go-test go-lint go-build \
         py-test py-lint \
         fe-build fe-lint fe-type-check \
+        whatsapp-login whatsapp-start \
         docker-up docker-down docker-build \
         db-migrate sqlc-gen
 
@@ -67,6 +68,13 @@ fe-lint: ## ESLint (dashboard + packages)
 
 fe-type-check: ## TypeScript type-check (dashboard + packages)
 	bun run type-check
+
+# ─── WhatsApp Bridge ──────────────────────────────────────────────────────────
+whatsapp-login: ## Start WhatsApp QR login and save a local session
+	set -a; [ ! -f .env ] || . ./.env; set +a; WHATSAPP_SESSION_DIR=data/whatsapp/default WHATSAPP_ALLOWED_SESSION_ROOTS=data,../../data/whatsapp,~/.khetibadi/whatsapp AUTH_SERVICE_URL=http://localhost:8000 AI_CHAT_URL=http://localhost:8012 REDIS_URL=redis://localhost:6379/0 bun run --cwd apps/whatsapp-bridge login
+
+whatsapp-start: ## Start the local WhatsApp bridge listener
+	set -a; [ ! -f .env ] || . ./.env; set +a; WHATSAPP_SESSION_DIR=data/whatsapp/default WHATSAPP_ALLOWED_SESSION_ROOTS=data,../../data/whatsapp,~/.khetibadi/whatsapp AUTH_SERVICE_URL=http://localhost:8000 AI_CHAT_URL=http://localhost:8012 REDIS_URL=redis://localhost:6379/0 bun run --cwd apps/whatsapp-bridge start
 
 # ─── Docker ───────────────────────────────────────────────────────────────────
 docker-up: ## Start all containers (detached)

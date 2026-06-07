@@ -4,6 +4,7 @@
   "version": "2.0.0",
   "description": "Khetibadi v2 — AI-powered agricultural platform monorepo",
   "workspaces": [
+    "apps/whatsapp-bridge",
     "apps/dashboard",
     "packages/ui",
     "packages/types"

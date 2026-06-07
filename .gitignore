@@ -56,6 +56,8 @@ apps/dashboard/dist/
 /.playwright-mcp/
 apps/dashboard/playwright-report/
 apps/dashboard/test-results/
+apps/whatsapp-bridge/data/
+data/whatsapp/
 packages/ui/dist/
 packages/types/dist/
 *.tsbuildinfo

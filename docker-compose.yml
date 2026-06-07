@@ -154,11 +154,44 @@ services:
       dockerfile: Dockerfile
     expose:
       - "8012"
+    ports:
+      - "${AI_CHAT_HOST_PORT:-8012}:8012"
     env_file: .env
     environment:
       <<: *app-env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8012/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  whatsapp-bridge:
+    profiles: ["whatsapp"]
+    build:
+      context: .
+      dockerfile: apps/whatsapp-bridge/Dockerfile
+    env_file: .env
+    environment:
+      <<: *app-env
+      AUTH_SERVICE_URL: http://auth:8000
+      AI_CHAT_URL: http://ai-chat:8012
+      WHATSAPP_SESSION_DIR: /app/data/whatsapp/default
+      WHATSAPP_ALLOWED_SESSION_ROOTS: /app/data/whatsapp
+      WHATSAPP_RATE_LIMIT_PER_SECOND: ${WHATSAPP_RATE_LIMIT_PER_SECOND:-20}
+      WHATSAPP_BRIDGE_CONCURRENCY: ${WHATSAPP_BRIDGE_CONCURRENCY:-4}
+      WHATSAPP_AI_TIMEOUT_MS: ${WHATSAPP_AI_TIMEOUT_MS:-60000}
+      WHATSAPP_BAILEYS_LOG_LEVEL: ${WHATSAPP_BAILEYS_LOG_LEVEL:-silent}
+    volumes:
+      - ${WHATSAPP_SESSION_HOST_PATH:-whatsapp_session_data}:/app/data/whatsapp
+    depends_on:
+      auth:
+        condition: service_started
+      ai-chat:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -171,8 +204,12 @@ services:
     ports:
       - "${DASHBOARD_HOST_PORT:-3000}:80"
     depends_on:
-      - auth
+      auth:
+        condition: service_started
+      ai-chat:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
+  whatsapp_session_data:

@@ -41,6 +41,8 @@ apps/*/cmd/*/worker
 # Generated ML artifacts
 data/**
 !data/.gitkeep
+apps/whatsapp-bridge/data/
+data/whatsapp/
 apps/ml-crop/models/*.pkl
 apps/ml-vision/models/*.pth
 apps/ml-vision/models/*.pt

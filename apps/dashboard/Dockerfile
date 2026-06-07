@@ -4,6 +4,7 @@ WORKDIR /build
 
 COPY package.json bun.lock turbo.json ./
 COPY apps/dashboard/package.json ./apps/dashboard/package.json
+COPY apps/whatsapp-bridge/package.json ./apps/whatsapp-bridge/package.json
 COPY packages/types/package.json ./packages/types/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 RUN bun install --frozen-lockfile
