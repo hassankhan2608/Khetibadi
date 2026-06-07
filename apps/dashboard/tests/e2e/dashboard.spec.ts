@@ -15,9 +15,20 @@ test.describe("Khetibadi dashboard end-to-end", () => {
     page.on("pageerror", (error) => {
       consoleIssues.push(`pageerror: ${error.message}`);
     });
+    page.on("requestfailed", (request) => {
+      consoleIssues.push(`requestfailed: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? "unknown"}`);
+    });
+    page.on("response", (response) => {
+      if (response.status() >= 500) {
+        consoleIssues.push(`response: ${response.status()} ${response.url()}`);
+      }
+    });
 
-    const email = `frontend-e2e-${Date.now()}@khetibadi.local`;
-    await register(page, email);
+    const runID = Date.now().toString().slice(-8).padStart(8, "0");
+    const email = `frontend-e2e-${runID}@khetibadi.local`;
+    const registrationPhone = `+9198${runID}`;
+    const updatedPhone = `+9197${runID}`;
+    await register(page, email, registrationPhone);
     await expect(page).toHaveURL(/\/dashboard/);
     await expect(
       page.getByRole("heading", { name: "E2E Farmer", exact: true }),
@@ -67,6 +78,12 @@ test.describe("Khetibadi dashboard end-to-end", () => {
     await expect(page.getByText(/event: token|data: \{/i)).toHaveCount(0);
 
     await page.getByRole("link", { name: /settings/i }).click();
+    const settingsPhone = page.getByLabel(/whatsapp phone number/i);
+    await expect(settingsPhone).toHaveValue(registrationPhone);
+    await settingsPhone.fill(updatedPhone);
+    await page.getByRole("button", { name: /save whatsapp number/i }).click();
+    await expect(page.getByText(/WhatsApp phone updated/i)).toBeVisible();
+    await expect(settingsPhone).toHaveValue(updatedPhone);
     await expect(page.getByText(/Public API origin/i)).toBeVisible();
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -80,10 +97,11 @@ test.describe("Khetibadi dashboard end-to-end", () => {
   });
 });
 
-async function register(page: Page, email: string): Promise<void> {
+async function register(page: Page, email: string, phone: string): Promise<void> {
   await page.goto("/register");
   await page.getByRole("textbox", { name: /name/i }).fill("E2E Farmer");
   await page.getByPlaceholder("you@example.com").fill(email);
+  await page.getByPlaceholder("+91 98765 43210").fill(phone);
   await page.getByPlaceholder(/at least 8 chars/i).fill(PASSWORD);
   await page.getByRole("button", { name: /create account/i }).click();
 }

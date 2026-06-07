@@ -28,10 +28,10 @@ import type {
   YieldPredictionRequest,
 } from "@khetibadi/types";
 
-import { apiBaseURL, chatApi, farmApi, marketApi, mlApi, visionApi } from "../lib/api";
+import { apiBaseURL, apiErrorCode, authApi, chatApi, farmApi, marketApi, mlApi, visionApi } from "../lib/api";
 import { queryClient } from "../lib/query-client";
 import { EmptyState, ErrorState, LoadingGrid } from "../components/states";
-import { getAccessToken, useAuthUser } from "../store/auth-store";
+import { getAccessToken, updateAuthUser, useAuthUser } from "../store/auth-store";
 
 const farmKeys = {
   all: ["farms"] as const,
@@ -510,15 +510,60 @@ export function AIAssistantPage() {
 }
 
 export function SettingsPage() {
+  const user = useAuthUser();
+  const [phone, setPhone] = useState(user?.phone ?? "");
+  const mutation = useMutation({
+    mutationFn: authApi.updateProfile,
+    onSuccess: (updatedUser) => {
+      updateAuthUser(updatedUser);
+      setPhone(updatedUser.phone ?? "");
+    },
+  });
+
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    mutation.mutate({ phone });
+  }
+
   return (
     <Card>
       <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
-      <CardContent className="space-y-3 text-sm leading-6 text-[#6d5a40]">
-        <p>Memory-only access tokens are restored by the gateway refresh cookie after browser reloads.</p>
-        <p>Public API origin: <code>{apiBaseURL()}</code></p>
+      <CardContent className="space-y-6 text-sm leading-6 text-[#6d5a40]">
+        <form className="space-y-3 rounded-3xl border border-[#e5d8bd] bg-[#fffaf0] p-4" onSubmit={submit}>
+          <div>
+            <Label htmlFor="settings-phone">WhatsApp phone number</Label>
+            <Input
+              id="settings-phone"
+              autoComplete="tel"
+              inputMode="tel"
+              placeholder="+91 98765 43210"
+              value={phone}
+              onChange={(event) => { setPhone(event.target.value); }}
+            />
+            <p className="mt-1 text-xs text-[#7a6548]">This number unlocks registered beta access for Khetibadi AI on WhatsApp.</p>
+          </div>
+          {mutation.error ? <p className="font-semibold text-[#8a2f22]">{profileErrorMessage(mutation.error)}</p> : null}
+          {mutation.isSuccess ? <p className="font-semibold text-[#2f5d3a]">WhatsApp phone updated.</p> : null}
+          <Button loading={mutation.isPending} type="submit">Save WhatsApp number</Button>
+        </form>
+        <div className="space-y-3">
+          <p>Memory-only access tokens are restored by the gateway refresh cookie after browser reloads.</p>
+          <p>Public API origin: <code>{apiBaseURL()}</code></p>
+        </div>
       </CardContent>
     </Card>
   );
+}
+
+function profileErrorMessage(error: unknown): string {
+  const code = apiErrorCode(error);
+  if (code === "phone_taken") {
+    return "That WhatsApp number is already linked to another account.";
+  }
+  if (code === "validation_error") {
+    return "Please enter a valid WhatsApp phone number.";
+  }
+  return "Unable to update WhatsApp phone number.";
 }
 
 type ChatStreamHandlers = {

@@ -21,12 +21,14 @@ import type {
   PaginatedResponse,
   PriceAlert,
   PriceAlertCreateRequest,
+  ProfileUpdateRequest,
   RegisterRequest,
   SoilSample,
   SoilSampleCreateRequest,
   WeatherData,
   YieldPrediction,
   YieldPredictionRequest,
+  User,
 } from "@khetibadi/types";
 
 import { clearAuth, getAccessToken, setAuth } from "../store/auth-store";
@@ -105,7 +107,18 @@ export const authApi = {
   async changePassword(req: ChangePasswordRequest): Promise<void> {
     await api.put("/auth/password", req);
   },
+  async profile(): Promise<User> {
+    return data(await api.get<ApiResponse<User>>("/auth/profile"));
+  },
+  async updateProfile(req: ProfileUpdateRequest): Promise<User> {
+    return data(await api.patch<ApiResponse<User>>("/auth/profile", req));
+  },
 };
+
+export function apiErrorCode(error: unknown): string | null {
+  const response = (error as { response?: { data?: { error?: unknown } } }).response;
+  return typeof response?.data?.error === "string" ? response.data.error : null;
+}
 
 export async function ensureAuthSession(): Promise<boolean> {
   if (getAccessToken() !== null) {

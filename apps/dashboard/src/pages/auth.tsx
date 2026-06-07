@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@khetibadi/ui";
 
-import { authApi } from "../lib/api";
+import { apiErrorCode, authApi } from "../lib/api";
 import { setAuth } from "../store/auth-store";
 
 export function LoginPage() {
@@ -64,6 +64,7 @@ export function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const mutation = useMutation({
     mutationFn: authApi.register,
@@ -75,7 +76,7 @@ export function RegisterPage() {
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    mutation.mutate({ name, email, password });
+    mutation.mutate({ name, email, password, phone });
   }
 
   return (
@@ -100,6 +101,16 @@ export function RegisterPage() {
             required
           />
         </Field>
+        <Field label="WhatsApp phone number">
+          <Input
+            autoComplete="tel"
+            inputMode="tel"
+            placeholder="+91 98765 43210"
+            value={phone}
+            onChange={(event) => { setPhone(event.target.value); }}
+          />
+          <p className="mt-1 text-xs text-[#7a6548]">Optional now, required for WhatsApp beta access.</p>
+        </Field>
         <Field label="Password">
           <Input
             minLength={8}
@@ -111,7 +122,7 @@ export function RegisterPage() {
             required
           />
         </Field>
-        {mutation.error ? <p className="text-sm font-semibold text-[#8a2f22]">Unable to create account.</p> : null}
+        {mutation.error ? <p className="text-sm font-semibold text-[#8a2f22]">{authErrorMessage(mutation.error)}</p> : null}
         <Button className="w-full" loading={mutation.isPending} type="submit">
           Create account
         </Button>
@@ -121,6 +132,17 @@ export function RegisterPage() {
       </p>
     </AuthShell>
   );
+}
+
+function authErrorMessage(error: unknown): string {
+  const code = apiErrorCode(error);
+  if (code === "phone_taken") {
+    return "That WhatsApp number is already linked to another account.";
+  }
+  if (code === "validation_error") {
+    return "Please enter a valid phone number or leave it blank.";
+  }
+  return "Unable to create account.";
 }
 
 function AuthShell({

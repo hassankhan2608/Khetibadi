@@ -16,6 +16,10 @@ export function setAuth(session: AuthSession): void {
   authStore.setState(() => ({ user: session.user, token: session.access_token }));
 }
 
+export function updateAuthUser(user: User): void {
+  authStore.setState((state) => ({ ...state, user }));
+}
+
 export function clearAuth(): void {
   authStore.setState(() => ({ user: null, token: null }));
 }
