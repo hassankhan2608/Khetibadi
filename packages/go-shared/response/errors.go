@@ -16,6 +16,7 @@ const (
 	CodeBadRequest     = "bad_request"
 	CodeUnprocessable  = "unprocessable_entity"
 	CodeEmailTaken     = "email_taken"
+	CodePhoneTaken     = "phone_taken"
 	CodeInvalidCreds   = "invalid_credentials" //nolint:gosec // error code string, not a credential
 	CodeTokenExpired   = "token_expired"
 	CodeTokenInvalid   = "token_invalid"

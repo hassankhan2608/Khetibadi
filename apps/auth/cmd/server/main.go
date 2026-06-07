@@ -77,6 +77,7 @@ type user struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
 	Name         string    `json:"name"`
+	Phone        *string   `json:"phone,omitempty"`
 	PasswordHash []byte    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -93,12 +94,14 @@ type authStore struct {
 	mu             sync.RWMutex
 	usersByEmail   map[string]*user
 	usersByID      map[string]*user
+	usersByPhone   map[string]*user
 	refreshByPlain map[string]*refreshToken
 }
 
 type authHandler struct {
 	store      *authStore
 	jwtSecret  []byte
+	hmacSecret string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 }
@@ -107,6 +110,7 @@ type registerRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 	Name     string `json:"name" binding:"required"`
+	Phone    string `json:"phone"`
 }
 
 type loginRequest struct {
@@ -117,6 +121,10 @@ type loginRequest struct {
 type passwordRequest struct {
 	CurrentPassword string `json:"current_password" binding:"required"`
 	NewPassword     string `json:"new_password" binding:"required"`
+}
+
+type profileRequest struct {
+	Phone *string `json:"phone"`
 }
 
 func main() {
@@ -180,6 +188,7 @@ func newAuthStore() *authStore {
 	return &authStore{
 		usersByEmail:   make(map[string]*user),
 		usersByID:      make(map[string]*user),
+		usersByPhone:   make(map[string]*user),
 		refreshByPlain: make(map[string]*refreshToken),
 	}
 }
@@ -196,6 +205,7 @@ func newAuthHandler(cfg *appConfig) *authHandler {
 	return &authHandler{
 		store:      newAuthStore(),
 		jwtSecret:  []byte(cfg.JWTSecret),
+		hmacSecret: cfg.HMACSecret,
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
 	}
@@ -206,7 +216,20 @@ func (h *authHandler) registerRoutes(r *gin.Engine) {
 	r.POST("/auth/login", h.login)
 	r.POST("/auth/refresh", h.refresh)
 	r.POST("/auth/logout", h.logout)
+	r.GET("/auth/profile", h.jwtAuth(), h.profile)
+	r.PATCH("/auth/profile", h.jwtAuth(), h.updateProfile)
 	r.PUT("/auth/password", h.jwtAuth(), h.changePassword)
+	r.GET("/internal/users/by-phone", h.serviceAuth(), h.lookupUserByPhone)
+}
+
+func (h *authHandler) serviceAuth() gin.HandlerFunc {
+	if h.hmacSecret == "" {
+		return func(c *gin.Context) {
+			response.Error(c, http.StatusServiceUnavailable, response.CodeUnavailable, "HMAC secret is not configured")
+			c.Abort()
+		}
+	}
+	return middleware.HMACAuth(middleware.HMACAuthConfig{Secret: h.hmacSecret})
 }
 
 func (h *authHandler) register(c *gin.Context) {
@@ -216,6 +239,11 @@ func (h *authHandler) register(c *gin.Context) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	phone, ok := normalizeOptionalPhone(req.Phone)
+	if !ok {
+		response.Error(c, http.StatusBadRequest, response.CodeValidation, "invalid phone format")
+		return
+	}
 	if !validPassword(req.Password) {
 		response.Error(c, http.StatusUnprocessableEntity, response.CodeValidation, "password must be at least 8 characters with one uppercase letter and one digit")
 		return
@@ -226,15 +254,25 @@ func (h *authHandler) register(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
-	u := &user{ID: uuid.NewString(), Email: req.Email, Name: strings.TrimSpace(req.Name), PasswordHash: hash, CreatedAt: now}
+	u := &user{ID: uuid.NewString(), Email: req.Email, Name: strings.TrimSpace(req.Name), Phone: phone, PasswordHash: hash, CreatedAt: now}
 	h.store.mu.Lock()
 	if _, exists := h.store.usersByEmail[u.Email]; exists {
 		h.store.mu.Unlock()
 		response.Error(c, http.StatusConflict, response.CodeEmailTaken, "a user with that email already exists")
 		return
 	}
+	if phone != nil {
+		if _, exists := h.store.usersByPhone[*phone]; exists {
+			h.store.mu.Unlock()
+			response.Error(c, http.StatusConflict, response.CodePhoneTaken, "a user with that phone already exists")
+			return
+		}
+	}
 	h.store.usersByEmail[u.Email] = u
 	h.store.usersByID[u.ID] = u
+	if phone != nil {
+		h.store.usersByPhone[*phone] = u
+	}
 	h.store.mu.Unlock()
 	h.issueSession(c, u, uuid.NewString(), http.StatusCreated)
 }
@@ -330,6 +368,76 @@ func (h *authHandler) changePassword(c *gin.Context) {
 	u.PasswordHash = hash
 	h.store.mu.Unlock()
 	response.OK(c, gin.H{"changed": true}, nil)
+}
+
+func (h *authHandler) profile(c *gin.Context) {
+	userID := middleware.UserIDFrom(c)
+	h.store.mu.RLock()
+	u := h.store.usersByID[userID]
+	h.store.mu.RUnlock()
+	if u == nil {
+		response.Error(c, http.StatusUnauthorized, response.CodeTokenInvalid, "access token is invalid")
+		return
+	}
+	response.OK(c, publicUser(u), nil)
+}
+
+func (h *authHandler) updateProfile(c *gin.Context) {
+	userID := middleware.UserIDFrom(c)
+	var req profileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeValidation, err.Error())
+		return
+	}
+	if req.Phone == nil {
+		response.Error(c, http.StatusBadRequest, response.CodeValidation, "phone is required")
+		return
+	}
+	phone, ok := normalizeOptionalPhone(*req.Phone)
+	if !ok {
+		response.Error(c, http.StatusBadRequest, response.CodeValidation, "invalid phone format")
+		return
+	}
+	h.store.mu.Lock()
+	u := h.store.usersByID[userID]
+	if u == nil {
+		h.store.mu.Unlock()
+		response.Error(c, http.StatusUnauthorized, response.CodeTokenInvalid, "access token is invalid")
+		return
+	}
+	if phone != nil {
+		if existing := h.store.usersByPhone[*phone]; existing != nil && existing.ID != u.ID {
+			h.store.mu.Unlock()
+			response.Error(c, http.StatusConflict, response.CodePhoneTaken, "a user with that phone already exists")
+			return
+		}
+	}
+	if u.Phone != nil {
+		delete(h.store.usersByPhone, *u.Phone)
+	}
+	u.Phone = phone
+	if phone != nil {
+		h.store.usersByPhone[*phone] = u
+	}
+	profile := publicUser(u)
+	h.store.mu.Unlock()
+	response.OK(c, profile, nil)
+}
+
+func (h *authHandler) lookupUserByPhone(c *gin.Context) {
+	phone, ok := normalizeOptionalPhone(c.Query("phone"))
+	if !ok || phone == nil {
+		response.Error(c, http.StatusBadRequest, response.CodeValidation, "invalid phone format")
+		return
+	}
+	h.store.mu.RLock()
+	u := h.store.usersByPhone[*phone]
+	h.store.mu.RUnlock()
+	if u == nil {
+		response.Error(c, http.StatusNotFound, response.CodeNotFound, "phone number is not registered")
+		return
+	}
+	response.OK(c, gin.H{"user_id": u.ID, "email": u.Email, "name": u.Name, "phone": *phone}, nil)
 }
 
 func (h *authHandler) issueSession(c *gin.Context, u *user, familyID string, status int) {
@@ -498,7 +606,52 @@ func writeGatewayError(w http.ResponseWriter, status int, code, message string) 
 }
 
 func publicUser(u *user) gin.H {
-	return gin.H{"id": u.ID, "email": u.Email, "name": u.Name, "created_at": u.CreatedAt}
+	return gin.H{"id": u.ID, "email": u.Email, "name": u.Name, "phone": u.Phone, "created_at": u.CreatedAt}
+}
+
+func normalizeOptionalPhone(input string) (*string, bool) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil, true
+	}
+	phone, ok := normalizePhoneNumber(trimmed)
+	if !ok {
+		return nil, false
+	}
+	return &phone, true
+}
+
+func normalizePhoneNumber(input string) (string, bool) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return "", false
+	}
+	hasPlus := strings.HasPrefix(trimmed, "+")
+	var digits strings.Builder
+	for i, r := range trimmed {
+		switch {
+		case r >= '0' && r <= '9':
+			digits.WriteRune(r)
+		case r == '+' && i == 0:
+		case r == ' ' || r == '-' || r == '(' || r == ')':
+		default:
+			return "", false
+		}
+	}
+	number := digits.String()
+	if !hasPlus {
+		switch {
+		case len(number) == 10:
+			number = "91" + number
+		case len(number) == 12 && strings.HasPrefix(number, "91"):
+		default:
+			return "", false
+		}
+	}
+	if len(number) < 8 || len(number) > 15 || number[0] == '0' {
+		return "", false
+	}
+	return "+" + number, true
 }
 
 func validPassword(password string) bool {
