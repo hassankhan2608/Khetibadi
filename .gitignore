@@ -53,6 +53,9 @@ models/**/*.ood.json
 node_modules/
 .turbo/
 apps/dashboard/dist/
+/.playwright-mcp/
+apps/dashboard/playwright-report/
+apps/dashboard/test-results/
 packages/ui/dist/
 packages/types/dist/
 *.tsbuildinfo

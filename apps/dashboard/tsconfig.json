@@ -16,5 +16,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "tests", "playwright.config.ts"]
+  "include": ["src", "tests", "playwright.config.ts", "vitest.config.ts"]
 }
